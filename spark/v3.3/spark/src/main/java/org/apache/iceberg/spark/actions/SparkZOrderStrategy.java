@@ -52,11 +52,13 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.connector.distributions.Distribution;
 import org.apache.spark.sql.connector.distributions.Distributions;
 import org.apache.spark.sql.connector.expressions.SortOrder;
+import org.apache.spark.sql.execution.datasources.RangeSampleSort$;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.types.StructField;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.collection.JavaConverters;
 
 public class SparkZOrderStrategy extends SparkSortStrategy {
   private static final Logger LOG = LoggerFactory.getLogger(SparkZOrderStrategy.class);
@@ -185,6 +187,11 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
       List<StructField> zOrderColumns = zOrderColNames.stream()
           .map(scanDF.schema()::apply)
           .collect(Collectors.toList());
+
+      Object[] rangeBound = RangeSampleSort$.MODULE$.getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), 3);
+      System.out.println(rangeBound);
+
+
 
       Column zvalueArray = functions.array(zOrderColumns.stream().map(colStruct ->
           zOrderUDF.sortedLexicographically(functions.col(colStruct.name()), colStruct.dataType())
