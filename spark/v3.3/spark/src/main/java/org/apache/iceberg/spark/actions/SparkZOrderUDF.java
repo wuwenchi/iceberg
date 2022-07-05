@@ -25,29 +25,29 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
+import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
-import org.apache.spark.sql.types.BinaryType;
-import org.apache.spark.sql.types.BooleanType;
-import org.apache.spark.sql.types.ByteType;
-import org.apache.spark.sql.types.DataType;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.DateType;
-import org.apache.spark.sql.types.DoubleType;
-import org.apache.spark.sql.types.FloatType;
-import org.apache.spark.sql.types.IntegerType;
-import org.apache.spark.sql.types.LongType;
-import org.apache.spark.sql.types.ShortType;
-import org.apache.spark.sql.types.StringType;
-import org.apache.spark.sql.types.TimestampType;
+import org.apache.spark.sql.types.*;
+import org.jetbrains.annotations.Nullable;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
+import scala.math.Ordering;
 
 class SparkZOrderUDF implements Serializable {
   private static final byte[] PRIMITIVE_EMPTY = new byte[ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE];
-
+  private final int numCols;
+  private final int varTypeSize;
+  private final int maxOutputSize;
   /**
    * Every Spark task runs iteratively on a rows in a single thread so ThreadLocal should protect from
    * concurrent access to any of these structures.
@@ -56,13 +56,11 @@ class SparkZOrderUDF implements Serializable {
   private transient ThreadLocal<byte[][]> inputHolder;
   private transient ThreadLocal<ByteBuffer[]> inputBuffers;
   private transient ThreadLocal<CharsetEncoder> encoder;
-
-  private final int numCols;
-
   private int inputCol = 0;
   private int totalOutputBytes = 0;
-  private final int varTypeSize;
-  private final int maxOutputSize;
+  private final UserDefinedFunction interleaveUDF =
+      functions.udf((Seq<byte[]> arrayBinary) -> interleaveBits(arrayBinary), DataTypes.BinaryType)
+          .withName("INTERLEAVE_BYTES");
 
   SparkZOrderUDF(int numCols, int varTypeSize, int maxOutputSize) {
     this.numCols = numCols;
@@ -156,6 +154,47 @@ class SparkZOrderUDF implements Serializable {
     return udf;
   }
 
+
+  /**
+   * TODO xzw
+   */
+  private <K> UserDefinedFunction longToOrderedBytesUDF(Supplier<K> supplier) {
+    UserDefinedFunction udf = functions
+        .udf(supplier.get(), DataTypes.BinaryType).withName("LONG_ORDERED_BYTES");
+
+    this.inputCol++;
+    increaseOutputSize(ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  /**
+   * TODO xzw
+   */
+  private <K> int getBound(Object key, K[] candidateBounds, BiFunction<Object, K, Boolean> bif) {
+    int bound = 0;
+    if (candidateBounds.length <= 128) {
+      while (bound < candidateBounds.length && bif.apply(key, candidateBounds[bound])) {
+        bound += 1;
+      }
+    } else {
+      bound = binarySearch(candidateBounds, key);
+      if (bound < 0) {
+        bound = -bound - 1;
+      }
+      if (bound > candidateBounds.length) {
+        bound = candidateBounds.length;
+      }
+    }
+    return bound;
+  }
+
+  /**
+   * TODO xzw
+   */
+  private <K> int binarySearch(K[] v1, K key) {
+    return Arrays.binarySearch(v1, key);
+  }
+
   private UserDefinedFunction floatToOrderedBytesUDF() {
     int position = inputCol;
     UserDefinedFunction udf = functions.udf((Float value) -> {
@@ -204,12 +243,31 @@ class SparkZOrderUDF implements Serializable {
   private UserDefinedFunction stringToOrderedBytesUDF() {
     int position = inputCol;
     UserDefinedFunction udf = functions.udf((String value) ->
-        ZOrderByteUtils.stringToOrderedBytes(
-            value,
-            varTypeSize,
-            inputBuffer(position, varTypeSize),
-            encoder.get()).array(), DataTypes.BinaryType)
-          .withName("STRING-LEXICAL-BYTES");
+            ZOrderByteUtils.stringToOrderedBytes(
+                value,
+                varTypeSize,
+                inputBuffer(position, varTypeSize),
+                encoder.get()).array(), DataTypes.BinaryType)
+        .withName("STRING-LEXICAL-BYTES");
+
+    this.inputCol++;
+    increaseOutputSize(varTypeSize);
+
+    return udf;
+  }
+
+  /**
+   * TODO xzw
+   */
+  private <K> UserDefinedFunction stringToOrderedBytesUDF(K[] candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((String value) ->
+            ZOrderByteUtils
+                .intToOrderedBytes(
+                    getBound(value, candidateBounds, (k, k2) -> Ordering.String.gt(k, k2)),
+                    inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+                .array(), DataTypes.BinaryType)
+        .withName("STRING-LEXICAL-BYTES");
 
     this.inputCol++;
     increaseOutputSize(varTypeSize);
@@ -220,7 +278,7 @@ class SparkZOrderUDF implements Serializable {
   private UserDefinedFunction bytesTruncateUDF() {
     int position = inputCol;
     UserDefinedFunction udf = functions.udf((byte[] value) ->
-        ZOrderByteUtils.byteTruncateOrFill(value, varTypeSize, inputBuffer(position, varTypeSize)).array(),
+                ZOrderByteUtils.byteTruncateOrFill(value, varTypeSize, inputBuffer(position, varTypeSize)).array(),
             DataTypes.BinaryType)
         .withName("BYTE-TRUNCATE");
 
@@ -230,12 +288,114 @@ class SparkZOrderUDF implements Serializable {
     return udf;
   }
 
-  private final UserDefinedFunction interleaveUDF =
-      functions.udf((Seq<byte[]> arrayBinary) -> interleaveBits(arrayBinary), DataTypes.BinaryType)
-          .withName("INTERLEAVE_BYTES");
-
   Column interleaveBytes(Column arrayBinary) {
     return interleaveUDF.apply(arrayBinary);
+  }
+
+  /**
+   * TODO xzw
+   */
+  public <K> Column sortedNew(Column column, DataType type, K[] candidateBounds) {
+    int position = inputCol;
+
+    if (type instanceof LongType) {
+      Supplier<UDF1<Long, Object>> supplier = () -> (Long value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value, candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof DoubleType || type instanceof FloatType) {
+      Supplier<UDF1<Double, Object>> supplier = () -> (Double value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(Double.doubleToLongBits(value), candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof IntegerType || type instanceof ShortType) {
+      Supplier<UDF1<Integer, Object>> supplier = () -> (Integer value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value.longValue(), candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof StringType) {
+      Supplier<UDF1<String, Object>> supplier = () -> (String value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value, candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof DateType) {
+      Supplier<UDF1<Date, Object>> supplier = () -> (Date value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value.getTime(), candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof TimestampType) {
+      Supplier<UDF1<Timestamp, Object>> supplier = () -> (Timestamp value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value.getTime(), candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof ByteType) {
+      Supplier<UDF1<Byte, Object>> supplier = () -> (Byte value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound((int) value, candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    } else if (type instanceof DecimalType) {
+      Supplier<UDF1<Decimal, Object>> supplier = () -> (Decimal value) -> {
+        if (value == null) {
+          return PRIMITIVE_EMPTY;
+        }
+        return ZOrderByteUtils.intToOrderedBytes(getBound(value.toLong(), candidateBounds,
+                    (k, k2) -> Ordering.Long.gt(k, k2)),
+                inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE))
+            .array();
+      };
+      return longToOrderedBytesUDF(supplier).apply(column);
+
+    }
+    return null;
   }
 
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
