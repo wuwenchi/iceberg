@@ -82,12 +82,18 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   private static final String VAR_LENGTH_CONTRIBUTION_KEY = "var-length-contribution";
   private static final int DEFAULT_VAR_LENGTH_CONTRIBUTION = ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
 
+  private static final String SPATIAL_CURVE_STRATEGY_TYPE_KEY = "spatial-curve-strategy-type";
+  private static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
+
+  private static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "spatial-curve-strategy-type";
+  private static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
+
   private final List<String> zOrderColNames;
 
   private int maxOutputSize;
   private int varLengthContribution;
   private SpatialCurveStrategyType spatialCurveStrategyType;
-  private int sampleSize;
+  private int buildRangeSampleSize;
 
   public SparkZOrderStrategy(Table table, SparkSession spark, List<String> zOrderColNames) {
     super(table, spark);
@@ -127,8 +133,13 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
     super.options(options);
 
     spatialCurveStrategyType = SpatialCurveStrategyType.fromValue(
-        PropertyUtil.propertyAsString(options, "", "direct")
-    );
+        PropertyUtil.propertyAsString(options, SPATIAL_CURVE_STRATEGY_TYPE_KEY, DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE));
+
+    buildRangeSampleSize = PropertyUtil.propertyAsInt(
+        options, BUILD_RANGE_SAMPLE_SIZE_KEY, DEFAULT_BUILD_RANGE_SAMPLE_SIZE);
+    Preconditions.checkArgument(buildRangeSampleSize > 0,
+        "Cannot use less than 1 for range sample size with zOrder, %s was set to %s",
+        BUILD_RANGE_SAMPLE_SIZE_KEY, buildRangeSampleSize);
 
     varLengthContribution = PropertyUtil.propertyAsInt(options, VAR_LENGTH_CONTRIBUTION_KEY,
         DEFAULT_VAR_LENGTH_CONTRIBUTION);
@@ -158,7 +169,6 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   @Override
   public Set<DataFile> rewriteFiles(List<FileScanTask> filesToRewrite) {
     SparkZOrderUDF zOrderUDF = new SparkZOrderUDF(zOrderColNames.size(), varLengthContribution, maxOutputSize);
-    Map<String, String> opts = this.table().properties();
 
     String groupID = UUID.randomUUID().toString();
     boolean requiresRepartition = !filesToRewrite.get(0).spec().equals(table().spec());
@@ -195,29 +205,29 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
           .map(scanDF.schema()::apply)
           .collect(Collectors.toList());
 
-      Object[] rangeBound = RangeSampleSort$.MODULE$.getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), 3);
-      System.out.println(Arrays.toString(rangeBound));
+      Column zValueArray;
+      switch (spatialCurveStrategyType) {
+        case DIRECT:
+          zValueArray = functions.array(zOrderColumns.stream().map(colStruct ->
+              zOrderUDF.sortedLexicographically(functions.col(colStruct.name()), colStruct.dataType())
+          ).toArray(Column[]::new));
+          break;
 
-      Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(rangeBound, ClassTag.apply(Object[].class));
+        case SAMPLE:
+          Object[] rangeBound = RangeSampleSort$.MODULE$.getRangeBound(
+              scanDF, JavaConverters.asScalaBuffer(zOrderColumns), buildRangeSampleSize);
+          Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(rangeBound, ClassTag.apply(Object[].class));
+          zValueArray = functions.array(zOrderColumns.stream().map(colStruct ->
+              zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value())
+          ).toArray(Column[]::new));
+          break;
 
-      // ------------------
-
-      Column zvalueArray;
-      if (spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.DIRECT_TYPE)) {
-        zvalueArray = functions.array(zOrderColumns.stream().map(colStruct ->
-            zOrderUDF.sortedLexicographically(functions.col(colStruct.name()), colStruct.dataType())
-        ).toArray(Column[]::new));
-      } else if (spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.SAMPLE_TYPE)) {
-        zvalueArray = functions.array(zOrderColumns.stream().map(colStruct ->
-            zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value())
-        ).toArray(Column[]::new));
-      } else {
-        throw new RuntimeException("徐志文正在测试 ........");
+        default:
+          // TODO 修改为unsupport
+          throw new RuntimeException("徐志文正在测试 ........");
       }
 
-      // -------------------
-
-      Dataset<Row> zvalueDF = scanDF.withColumn(Z_COLUMN, zOrderUDF.interleaveBytes(zvalueArray));
+      Dataset<Row> zvalueDF = scanDF.withColumn(Z_COLUMN, zOrderUDF.interleaveBytes(zValueArray));
 
       SQLConf sqlConf = cloneSession.sessionState().conf();
       LogicalPlan sortPlan = sortPlan(distribution, ordering, zvalueDF.logicalPlan(), sqlConf);
@@ -259,12 +269,16 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
     static final String SAMPLE_TYPE = "sample";
     private static final Map<String, SpatialCurveStrategyType> TYPE_VALUE_MAP;
 
+    private final String value;
+
     static {
       TYPE_VALUE_MAP = Arrays.stream(SpatialCurveStrategyType.class.getEnumConstants())
           .collect(Collectors.toMap(e -> e.value, Function.identity()));
     }
 
-    private final String value;
+    public String getValue() {
+      return value;
+    }
 
     SpatialCurveStrategyType(String value) {
       this.value = value;
