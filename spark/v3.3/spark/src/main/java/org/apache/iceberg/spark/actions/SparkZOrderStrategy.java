@@ -19,13 +19,11 @@
 
 package org.apache.iceberg.spark.actions;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.NullOrder;
@@ -54,14 +52,12 @@ import org.apache.spark.sql.connector.distributions.Distribution;
 import org.apache.spark.sql.connector.distributions.Distributions;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.execution.datasources.RangeSampleSort$;
-import org.apache.spark.sql.execution.datasources.RawDecisionBound;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.types.StructField;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.collection.JavaConverters;
-import scala.math.Ordering;
 import scala.reflect.ClassTag;
 
 public class SparkZOrderStrategy extends SparkSortStrategy {
@@ -80,8 +76,8 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   private static final int DEFAULT_MAX_OUTPUT_SIZE = Integer.MAX_VALUE;
 
   /**
-  * Controls the number of bytes considered from an input column of a type with variable length (String, Binary).
-  * Default is to use the same size as primitives {@link ZOrderByteUtils#PRIMITIVE_BUFFER_SIZE}
+   * Controls the number of bytes considered from an input column of a type with variable length (String, Binary).
+   * Default is to use the same size as primitives {@link ZOrderByteUtils#PRIMITIVE_BUFFER_SIZE}
    */
   private static final String VAR_LENGTH_CONTRIBUTION_KEY = "var-length-contribution";
   private static final int DEFAULT_VAR_LENGTH_CONTRIBUTION = ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
@@ -91,36 +87,7 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   private int maxOutputSize;
   private int varLengthContribution;
   private SpatialCurveStrategyType spatialCurveStrategyType;
-  @Override
-  public Set<String> validOptions() {
-    return ImmutableSet.<String>builder()
-        .addAll(super.validOptions())
-        .add(VAR_LENGTH_CONTRIBUTION_KEY)
-        .add(MAX_OUTPUT_SIZE_KEY)
-        .build();
-  }
   private int sampleSize;
-  @Override
-  public RewriteStrategy options(Map<String, String> options) {
-    super.options(options);
-
-    spatialCurveStrategyType = SpatialCurveStrategyType.fromValue(
-            PropertyUtil.propertyAsString(options,"","direct")
-    );
-
-    varLengthContribution = PropertyUtil.propertyAsInt(options, VAR_LENGTH_CONTRIBUTION_KEY,
-        DEFAULT_VAR_LENGTH_CONTRIBUTION);
-    Preconditions.checkArgument(varLengthContribution > 0,
-        "Cannot use less than 1 byte for variable length types with zOrder, %s was set to %s",
-        VAR_LENGTH_CONTRIBUTION_KEY, varLengthContribution);
-
-    maxOutputSize = PropertyUtil.propertyAsInt(options, MAX_OUTPUT_SIZE_KEY, DEFAULT_MAX_OUTPUT_SIZE);
-    Preconditions.checkArgument(maxOutputSize > 0,
-        "Cannot have the interleaved ZOrder value use less than 1 byte, %s was set to %s",
-        MAX_OUTPUT_SIZE_KEY, maxOutputSize);
-
-    return this;
-  }
 
   public SparkZOrderStrategy(Table table, SparkSession spark, List<String> zOrderColNames) {
     super(table, spark);
@@ -137,13 +104,44 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
 
     if (!partZOrderCols.isEmpty()) {
       LOG.warn("Cannot ZOrder on an Identity partition column as these values are constant within a partition " +
-                      "and will be removed from the ZOrder expression: {}", partZOrderCols);
+          "and will be removed from the ZOrder expression: {}", partZOrderCols);
       zOrderColNames.removeAll(partZOrderCols);
       Preconditions.checkArgument(!zOrderColNames.isEmpty(),
           "Cannot perform ZOrdering, all columns provided were identity partition columns and cannot be used.");
     }
 
     this.zOrderColNames = zOrderColNames;
+  }
+
+  @Override
+  public Set<String> validOptions() {
+    return ImmutableSet.<String>builder()
+        .addAll(super.validOptions())
+        .add(VAR_LENGTH_CONTRIBUTION_KEY)
+        .add(MAX_OUTPUT_SIZE_KEY)
+        .build();
+  }
+
+  @Override
+  public RewriteStrategy options(Map<String, String> options) {
+    super.options(options);
+
+    spatialCurveStrategyType = SpatialCurveStrategyType.fromValue(
+        PropertyUtil.propertyAsString(options, "", "direct")
+    );
+
+    varLengthContribution = PropertyUtil.propertyAsInt(options, VAR_LENGTH_CONTRIBUTION_KEY,
+        DEFAULT_VAR_LENGTH_CONTRIBUTION);
+    Preconditions.checkArgument(varLengthContribution > 0,
+        "Cannot use less than 1 byte for variable length types with zOrder, %s was set to %s",
+        VAR_LENGTH_CONTRIBUTION_KEY, varLengthContribution);
+
+    maxOutputSize = PropertyUtil.propertyAsInt(options, MAX_OUTPUT_SIZE_KEY, DEFAULT_MAX_OUTPUT_SIZE);
+    Preconditions.checkArgument(maxOutputSize > 0,
+        "Cannot have the interleaved ZOrder value use less than 1 byte, %s was set to %s",
+        MAX_OUTPUT_SIZE_KEY, maxOutputSize);
+
+    return this;
   }
 
   @Override
@@ -205,15 +203,15 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
       // ------------------
 
       Column zvalueArray;
-      if(spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.DIRECT_TYPE)){
+      if (spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.DIRECT_TYPE)) {
         zvalueArray = functions.array(zOrderColumns.stream().map(colStruct ->
-                zOrderUDF.sortedLexicographically(functions.col(colStruct.name()), colStruct.dataType())
+            zOrderUDF.sortedLexicographically(functions.col(colStruct.name()), colStruct.dataType())
         ).toArray(Column[]::new));
-      }else if (spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.SAMPLE_TYPE)) {
+      } else if (spatialCurveStrategyType.value.equals(SpatialCurveStrategyType.SAMPLE_TYPE)) {
         zvalueArray = functions.array(zOrderColumns.stream().map(colStruct ->
-                zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(),broadcast.value())
+            zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value())
         ).toArray(Column[]::new));
-      }else {
+      } else {
         throw new RuntimeException("徐志文正在测试 ........");
       }
 
@@ -250,24 +248,30 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   /**
    * TODO xzw
    */
-  private enum SpatialCurveStrategyType{
+  private enum SpatialCurveStrategyType {
     /**
      *
      */
-    DIRECT("direct") ,
+    DIRECT("direct"),
     SAMPLE("sample");
 
-    static final String DIRECT_TYPE="direct";
-    static final String SAMPLE_TYPE="sample";
-    private String value;
+    static final String DIRECT_TYPE = "direct";
+    static final String SAMPLE_TYPE = "sample";
+    private static final Map<String, SpatialCurveStrategyType> TYPE_VALUE_MAP;
+
+    static {
+      TYPE_VALUE_MAP = Arrays.stream(SpatialCurveStrategyType.class.getEnumConstants())
+          .collect(Collectors.toMap(e -> e.value, Function.identity()));
+    }
+
+    private final String value;
+
     SpatialCurveStrategyType(String value) {
-      this.value=value;
+      this.value = value;
     }
 
-    public static SpatialCurveStrategyType  fromValue(String value){
-
-      return  SpatialCurveStrategyType.valueOf(value);
+    public static SpatialCurveStrategyType fromValue(String type) {
+      return TYPE_VALUE_MAP.get(type);
     }
-
   }
 }

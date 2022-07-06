@@ -97,6 +97,9 @@ class SparkZOrderUDF implements Serializable {
     return udf;
   }
 
+  public static void main(String[] args) {
+    System.out.println("asdasda");
+  }
   private UserDefinedFunction shortToOrderedBytesUDF() {
     int position = inputCol;
     UserDefinedFunction udf = functions.udf((Short value) -> {
@@ -223,7 +226,7 @@ class SparkZOrderUDF implements Serializable {
   /**
    * TODO xzw
    */
-  public <K> Column sortedNew(Column column, DataType type, K[] candidateBounds) {
+  public  Column sortedNew(Column column, DataType type, Object[] candidateBounds) {
     int position = inputCol;
     ByteBuffer buffer = inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE);
 
