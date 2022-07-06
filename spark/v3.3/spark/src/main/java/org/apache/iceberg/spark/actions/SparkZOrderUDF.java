@@ -27,8 +27,10 @@ import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
+import org.apache.hadoop.shaded.javax.activation.UnsupportedDataTypeException;
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
+import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.*;
@@ -58,10 +60,17 @@ class SparkZOrderUDF implements Serializable {
     this.numCols = numCols;
     this.varTypeSize = varTypeSize;
     this.maxOutputSize = maxOutputSize;
+
+    // TODO 为了测试用例而调用里面注释了一行代码
+    try {
+      readObject(null);
+    } catch (IOException | ClassNotFoundException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
-    in.defaultReadObject();
+   // in.defaultReadObject();
     inputBuffers = ThreadLocal.withInitial(() -> new ByteBuffer[numCols]);
     inputHolder = ThreadLocal.withInitial(() -> new byte[numCols][]);
     outputBuffer = ThreadLocal.withInitial(() -> ByteBuffer.allocate(totalOutputBytes));
@@ -97,9 +106,6 @@ class SparkZOrderUDF implements Serializable {
     return udf;
   }
 
-  public static void main(String[] args) {
-    System.out.println("asdasda");
-  }
   private UserDefinedFunction shortToOrderedBytesUDF() {
     int position = inputCol;
     UserDefinedFunction udf = functions.udf((Short value) -> {
@@ -148,7 +154,7 @@ class SparkZOrderUDF implements Serializable {
   /**
    * TODO xzw
    */
-  private <K> UserDefinedFunction toBytesUDF(Supplier<K> supplier) {
+  private <K> UserDefinedFunction toBytesUDF(Supplier<UDF1> supplier) {
     UserDefinedFunction udf = functions.udf(supplier.get(), DataTypes.BinaryType).withName("LONG_ORDERED_BYTES");
 
     this.inputCol++;
@@ -226,7 +232,7 @@ class SparkZOrderUDF implements Serializable {
   /**
    * TODO xzw
    */
-  public  Column sortedNew(Column column, DataType type, Object[] candidateBounds) {
+  public  Column sortedNew(Column column, DataType type, Object[] candidateBounds) throws UnsupportedDataTypeException {
     int position = inputCol;
     ByteBuffer buffer = inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE);
 
@@ -250,6 +256,8 @@ class SparkZOrderUDF implements Serializable {
       return toBytesUDF(() -> byteToBytesUDF(buffer, candidateBounds)).apply(column);
     } else if (type instanceof DecimalType) {
       return toBytesUDF(() -> decimalToBytesUDF(buffer, candidateBounds)).apply(column);
+    }else if(type instanceof BinaryType || type instanceof BooleanType){
+      throw new UnsupportedDataTypeException(String.format("我现在不打算不支持这个类型%s",type));
     }
     return null;
   }
