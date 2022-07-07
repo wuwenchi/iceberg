@@ -87,11 +87,11 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   private static final String VAR_LENGTH_CONTRIBUTION_KEY = "var-length-contribution";
   private static final int DEFAULT_VAR_LENGTH_CONTRIBUTION = ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
 
-  private static final String SPATIAL_CURVE_STRATEGY_TYPE_KEY = "spatial-curve-strategy-type";
-  private static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
+  public static final String SPATIAL_CURVE_STRATEGY_TYPE_KEY = "spatial-curve-strategy-type";
+  public static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
 
-  private static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "spatial-curve-strategy-type";
-  private static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
+  public static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "build_range_sample_size";
+  public static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
 
   private final List<String> zOrderColNames;
 
@@ -136,6 +136,8 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
         .addAll(super.validOptions())
         .add(VAR_LENGTH_CONTRIBUTION_KEY)
         .add(MAX_OUTPUT_SIZE_KEY)
+        .add(SPATIAL_CURVE_STRATEGY_TYPE_KEY)
+        .add(BUILD_RANGE_SAMPLE_SIZE_KEY)
         .build();
   }
 
@@ -143,31 +145,32 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   public RewriteStrategy options(Map<String, String> options) {
     super.options(options);
 
-    spatialCurveStrategyType = SpatialCurveStrategyType
-        .fromValue(PropertyUtil.propertyAsString(options, SPATIAL_CURVE_STRATEGY_TYPE_KEY,
-            DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE));
+    String type = PropertyUtil.propertyAsString(
+        options,
+        SPATIAL_CURVE_STRATEGY_TYPE_KEY,
+        DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE);
+    spatialCurveStrategyType = SpatialCurveStrategyType.fromValue(type);
+    Preconditions.checkArgument(spatialCurveStrategyType != null,
+        "Unsupported type with zOrder, %s was set to %s", SPATIAL_CURVE_STRATEGY_TYPE_KEY, type);
 
-    buildRangeSampleSize = PropertyUtil.propertyAsInt(options,
-        BUILD_RANGE_SAMPLE_SIZE_KEY, DEFAULT_BUILD_RANGE_SAMPLE_SIZE);
-    Preconditions.checkArgument(
-        buildRangeSampleSize > 0,
+    buildRangeSampleSize = PropertyUtil.propertyAsInt(
+        options,
+        BUILD_RANGE_SAMPLE_SIZE_KEY,
+        DEFAULT_BUILD_RANGE_SAMPLE_SIZE);
+    Preconditions.checkArgument(buildRangeSampleSize > 0,
         "Cannot use less than 1 for range sample size with zOrder, %s was set to %s",
         BUILD_RANGE_SAMPLE_SIZE_KEY, buildRangeSampleSize);
 
-    varLengthContribution = PropertyUtil.propertyAsInt(options,
-        VAR_LENGTH_CONTRIBUTION_KEY, DEFAULT_VAR_LENGTH_CONTRIBUTION);
+    varLengthContribution = PropertyUtil.propertyAsInt(options, VAR_LENGTH_CONTRIBUTION_KEY,
+        DEFAULT_VAR_LENGTH_CONTRIBUTION);
     Preconditions.checkArgument(varLengthContribution > 0,
-        "Cannot use less than 1 byte for variable length types with zOrder," +
-            " %s was set to %s", VAR_LENGTH_CONTRIBUTION_KEY,
-        varLengthContribution);
+        "Cannot use less than 1 byte for variable length types with zOrder, %s was set to %s",
+        VAR_LENGTH_CONTRIBUTION_KEY, varLengthContribution);
 
     maxOutputSize = PropertyUtil.propertyAsInt(options, MAX_OUTPUT_SIZE_KEY, DEFAULT_MAX_OUTPUT_SIZE);
-    Preconditions.checkArgument(
-        maxOutputSize > 0,
+    Preconditions.checkArgument(maxOutputSize > 0,
         "Cannot have the interleaved ZOrder value use less than 1 byte, %s was set to %s",
-        MAX_OUTPUT_SIZE_KEY,
-        maxOutputSize);
-
+        MAX_OUTPUT_SIZE_KEY, maxOutputSize);
     return this;
   }
 
