@@ -123,12 +123,10 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
       optional(2, "c2", Types.StringType.get()),
       optional(3, "c3", Types.StringType.get())
   );
-
-  @Rule
-  public TemporaryFolder temp = new TemporaryFolder();
-
   private final FileRewriteCoordinator coordinator = FileRewriteCoordinator.get();
   private final FileScanTaskSetManager manager = FileScanTaskSetManager.get();
+  @Rule
+  public TemporaryFolder temp = new TemporaryFolder();
   private String tableLocation = null;
 
   @Before
@@ -308,7 +306,8 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         "Data manifest should not have existing data file",
         0,
         (long) table.currentSnapshot().dataManifests(table.io()).get(0).existingFilesCount());
-    Assert.assertEquals("Data manifest should have 1 delete data file",
+    Assert.assertEquals(
+        "Data manifest should have 1 delete data file",
         1L,
         (long) table.currentSnapshot().dataManifests(table.io()).get(0).deletedFilesCount());
     Assert.assertEquals(
@@ -337,7 +336,8 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     assertEquals("Rows must match", expectedRecords, actualRecords);
 
     table.refresh();
-    Assert.assertTrue("Table sequence number should be incremented",
+    Assert.assertTrue(
+        "Table sequence number should be incremented",
         oldSequenceNumber < table.currentSnapshot().sequenceNumber());
 
     Dataset<Row> rows = SparkTableUtil.loadMetadataTable(spark, table, MetadataTableType.ENTRIES);
@@ -801,26 +801,30 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   public void testInvalidOptions() {
     Table table = createTable(20);
 
-    AssertHelpers.assertThrows("No negative values for partial progress max commits",
+    AssertHelpers.assertThrows(
+        "No negative values for partial progress max commits",
         IllegalArgumentException.class,
         () -> basicRewrite(table)
             .option(RewriteDataFiles.PARTIAL_PROGRESS_ENABLED, "true")
             .option(RewriteDataFiles.PARTIAL_PROGRESS_MAX_COMMITS, "-5")
             .execute());
 
-    AssertHelpers.assertThrows("No negative values for max concurrent groups",
+    AssertHelpers.assertThrows(
+        "No negative values for max concurrent groups",
         IllegalArgumentException.class,
         () -> basicRewrite(table)
             .option(RewriteDataFiles.MAX_CONCURRENT_FILE_GROUP_REWRITES, "-5")
             .execute());
 
-    AssertHelpers.assertThrows("No unknown options allowed",
+    AssertHelpers.assertThrows(
+        "No unknown options allowed",
         IllegalArgumentException.class,
         () -> basicRewrite(table)
             .option("foobarity", "-5")
             .execute());
 
-    AssertHelpers.assertThrows("Cannot set rewrite-job-order to foo",
+    AssertHelpers.assertThrows(
+        "Cannot set rewrite-job-order to foo",
         IllegalArgumentException.class,
         () -> basicRewrite(table)
             .option(RewriteDataFiles.REWRITE_JOB_ORDER, "foo")
@@ -1000,7 +1004,8 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
             .execute();
 
     Assert.assertEquals("Should have 1 fileGroups", result.rewriteResults().size(), 1);
-    Assert.assertTrue("Should have written 40+ files",
+    Assert.assertTrue(
+        "Should have written 40+ files",
         Iterables.size(table.currentSnapshot().addedFiles(table.io())) >= 40);
 
     table.refresh();
@@ -1053,7 +1058,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     List<Object[]> originalData = currentData();
     double originalFilesC2 = percentFilesRequired(table, "c2", "foo23");
     double originalFilesC3 = percentFilesRequired(table, "c3", "bar21");
-    double originalFilesC2C3 = percentFilesRequired(table, new String[]{"c2", "c3"}, new String[]{"foo23", "bar23"});
+    double originalFilesC2C3 = percentFilesRequired(table, new String[] {"c2", "c3"}, new String[] {"foo23", "bar23"});
 
     Assert.assertTrue("Should require all files to scan c2", originalFilesC2 > 0.99);
     Assert.assertTrue("Should require all files to scan c3", originalFilesC3 > 0.99);
@@ -1081,13 +1086,16 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
 
     double filesScannedC2 = percentFilesRequired(table, "c2", "foo23");
     double filesScannedC3 = percentFilesRequired(table, "c3", "bar21");
-    double filesScannedC2C3 = percentFilesRequired(table, new String[]{"c2", "c3"}, new String[]{"foo23", "bar23"});
+    double filesScannedC2C3 = percentFilesRequired(table, new String[] {"c2", "c3"}, new String[] {"foo23", "bar23"});
 
-    Assert.assertTrue("Should have reduced the number of files required for c2",
+    Assert.assertTrue(
+        "Should have reduced the number of files required for c2",
         filesScannedC2 < originalFilesC2);
-    Assert.assertTrue("Should have reduced the number of files required for c3",
+    Assert.assertTrue(
+        "Should have reduced the number of files required for c3",
         filesScannedC3 < originalFilesC3);
-    Assert.assertTrue("Should have reduced the number of files required for a c2,c3 predicate",
+    Assert.assertTrue(
+        "Should have reduced the number of files required for a c2,c3 predicate",
         filesScannedC2C3 < originalFilesC2C3);
   }
 
@@ -1116,7 +1124,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
       functions.array(finalZOrderColumns.stream().map(colStruct -> {
         try {
           return zOrderUDF
-              .sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[]{1, 2, 3, 4, 5});
+              .sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[] {1, 2, 3, 4, 5});
         } catch (UnsupportedDataTypeException e) {
           // I know he's going to throw this RuntimeException exception, so what's the point of my test
           throw new RuntimeException(e);
@@ -1132,12 +1140,11 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     // TODO All the best
     functions.array(zOrderColumns.stream().map(colStruct -> {
       try {
-        return zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[]{1, 2, 3, 4, 5});
+        return zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[] {1, 2, 3, 4, 5});
       } catch (UnsupportedDataTypeException e) {
         throw new RuntimeException(e);
       }
     }).toArray(Column[]::new));
-
   }
 
   @Test
@@ -1317,7 +1324,8 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     Assert.assertNotEquals("Number of files order should not be ascending", actual, expected);
   }
 
-  private Stream<RewriteFileGroup> toGroupStream(Table table,
+  private Stream<RewriteFileGroup> toGroupStream(
+      Table table,
       BaseRewriteDataFilesSparkAction rewrite) {
     rewrite.validateAndInitOptions();
     Map<StructLike, List<List<FileScanTask>>> fileGroupsByPartition =
@@ -1385,10 +1393,10 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
 
   private <T> Pair<T, T> boundsOf(DataFile file, NestedField field, Class<T> javaClass) {
     int columnId = field.fieldId();
-    return Pair.of(javaClass.cast(Conversions.fromByteBuffer(field.type(), file.lowerBounds().get(columnId))),
+    return Pair.of(
+        javaClass.cast(Conversions.fromByteBuffer(field.type(), file.lowerBounds().get(columnId))),
         javaClass.cast(Conversions.fromByteBuffer(field.type(), file.upperBounds().get(columnId))));
   }
-
 
   private <T> List<Pair<Pair<T, T>, Pair<T, T>>> checkForOverlappingFiles(Table table, String column) {
     table.refresh();
@@ -1444,6 +1452,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
 
   /**
    * Create a table with a certain number of files, returns the size of a file
+   *
    * @param files number of files to create
    * @return the created table
    */
@@ -1453,8 +1462,9 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     return table;
   }
 
-  protected Table createTablePartitioned(int partitions, int files,
-                                         int numRecords, Map<String, String> options) {
+  protected Table createTablePartitioned(
+      int partitions, int files,
+      int numRecords, Map<String, String> options) {
     PartitionSpec spec = PartitionSpec.builderFor(SCHEMA)
         .identity("c1")
         .truncate("c2", 2)
@@ -1589,7 +1599,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   private double percentFilesRequired(Table table, String col, String value) {
-    return percentFilesRequired(table, new String[]{col}, new String[]{value});
+    return percentFilesRequired(table, new String[] {col}, new String[] {value});
   }
 
   private double percentFilesRequired(Table table, String[] cols, String[] values) {
