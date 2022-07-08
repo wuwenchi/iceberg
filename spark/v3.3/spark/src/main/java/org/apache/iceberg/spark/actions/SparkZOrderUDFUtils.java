@@ -127,13 +127,21 @@ class SparkZOrderUDFUtils {
   /**
    * TODO xzw
    */
-  private static int getStringBound(String key, Object[] candidateBounds) {
+  public static int getStringBound(String key, Object[] candidateBounds) {
     return getBound(key, candidateBounds, (o, o2) -> gt((String) o, (String) o2));
   }
 
-  private static int getLongBound(Long key, Object[] candidateBounds) {
+  public static int getLongBound(Long key, Object[] candidateBounds) {
     return getBound(key, candidateBounds, (o, o2) -> gt((Long) o, (Long) o2));
   }
+
+  /**
+   * 确定单条数据的边界下标索引
+   * @param key
+   * @param candidateBounds
+   * @param f
+   * @return
+   */
 
   private static int getBound(Object key, Object[] candidateBounds, BiFunction<Object, Object, Boolean> f) {
     int bound = 0;

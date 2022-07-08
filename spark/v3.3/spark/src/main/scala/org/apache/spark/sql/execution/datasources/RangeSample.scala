@@ -24,6 +24,8 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 import org.apache.spark.util.random.SamplingUtils
+
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.hashing.byteswap32
@@ -35,7 +37,7 @@ class RangeSample[K: ClassTag, V](
                                  ) extends Serializable {
 
   import scala.collection.mutable.ArrayBuffer
-
+  // TODO 改一改
   // We allow zEncodeNum = 0, which happens when sorting an empty RDD under the default settings.
   require(zEncodeNum >= 0, s"Number of zEncodeNum cannot be negative but found $zEncodeNum.")
   require(samplePointsPerPartitionHint > 0,
@@ -167,23 +169,23 @@ object RangeSampleSort {
       val values = zOrderIndexField.map { case (index, field) =>
         field.dataType match {
           case LongType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getLong(index)
+            if (row.isNullAt(index)) Long.MaxValue else row.getLong(index).longValue()
           case DoubleType =>
-            if (row.isNullAt(index)) Double.MaxValue else row.getDouble(index).toLong
+            if (row.isNullAt(index)) Long.MaxValue else row.getDouble(index).longValue()
           case IntegerType =>
-            if (row.isNullAt(index)) Int.MaxValue else row.getInt(index).toLong
+            if (row.isNullAt(index)) Long.MaxValue else row.getInt(index).longValue()
           case FloatType =>
-            if (row.isNullAt(index)) Float.MaxValue else row.getFloat(index).toLong
+            if (row.isNullAt(index)) Long.MaxValue else row.getFloat(index).longValue()
           case StringType =>
             if (row.isNullAt(index)) "" else row.getString(index)
           case DateType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getDate(index).getTime
+            if (row.isNullAt(index)) Long.MaxValue else row.getDate(index).getTime.longValue()
           case TimestampType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getTimestamp(index).getTime
+            if (row.isNullAt(index)) Long.MaxValue else row.getTimestamp(index).getTime.longValue()
           case ByteType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getByte(index).toLong
+            if (row.isNullAt(index)) Long.MaxValue else row.getByte(index).longValue()
           case ShortType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).toLong
+            if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).longValue()
           //          // TODO 需要支持吗？
           //          case DecimalType =>
           //            if (row.isNullAt(index)) Long.MaxValue else row.getDecimal(index)
@@ -198,10 +200,11 @@ object RangeSampleSort {
     }
 
     // TODO 改成配置？
-    val hint = 5
+    // XZW DEBUG
+    val hint = 20
     val sample = new RangeSample(zOrderBounds, sampleRdd, hint)
     // get all samples
-    val candidates = sample.getRangeBounds()
+    val candidates: mutable.Seq[(Seq[Any], Float)] = sample.getRangeBounds()
     // calculates bound
     val sampleBounds = {
       val candidateColNumber = candidates.head._1.length

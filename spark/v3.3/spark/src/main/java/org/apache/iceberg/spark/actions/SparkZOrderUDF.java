@@ -27,7 +27,6 @@ import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
-import org.apache.hadoop.shaded.javax.activation.UnsupportedDataTypeException;
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.api.java.UDF1;
@@ -249,7 +248,7 @@ class SparkZOrderUDF implements Serializable {
   /**
    * TODO xzw
    */
-  public Column sortedNew(Column column, DataType type, Object[] candidateBounds) throws UnsupportedDataTypeException {
+  public Column sortedSample(Column column, DataType type, Object[] candidateBounds)  {
     int position = inputCol;
     ByteBuffer buffer = inputBuffer(position, ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE);
 
@@ -273,10 +272,13 @@ class SparkZOrderUDF implements Serializable {
       return toBytesUDF(() -> byteToBytesUDF(buffer, candidateBounds)).apply(column);
     } else if (type instanceof DecimalType) {
       return toBytesUDF(() -> decimalToBytesUDF(buffer, candidateBounds)).apply(column);
-    } else if (type instanceof BinaryType || type instanceof BooleanType) {
-      throw new UnsupportedDataTypeException(String.format("我现在不打算不支持这个类型%s", type));
+    } else if (type instanceof BooleanType) {
+      throw new IllegalArgumentException(
+          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
+    } else {
+      throw new IllegalArgumentException(
+          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
     }
-    return null;
   }
 
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
@@ -300,8 +302,6 @@ class SparkZOrderUDF implements Serializable {
     } else if (type instanceof BooleanType) {
       return booleanToOrderedBytesUDF().apply(column);
     } else if (type instanceof TimestampType) {
-      return longToOrderedBytesUDF().apply(column.cast(DataTypes.LongType));
-    } else if (type instanceof DateType) {
       return longToOrderedBytesUDF().apply(column.cast(DataTypes.LongType));
     } else {
       throw new IllegalArgumentException(

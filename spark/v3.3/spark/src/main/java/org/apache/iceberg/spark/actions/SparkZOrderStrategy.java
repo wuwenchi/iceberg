@@ -28,7 +28,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.apache.hadoop.shaded.javax.activation.UnsupportedDataTypeException;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.NullOrder;
@@ -66,33 +65,27 @@ import scala.collection.JavaConverters;
 import scala.reflect.ClassTag;
 
 public class SparkZOrderStrategy extends SparkSortStrategy {
+  public static final String SPATIAL_CURVE_STRATEGY_TYPE_KEY = "spatial-curve-strategy-type";
+  public static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
+  public static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "build_range_sample_size";
+  public static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
   private static final Logger LOG = LoggerFactory.getLogger(SparkZOrderStrategy.class);
-
   private static final String Z_COLUMN = "ICEZVALUE";
   private static final Schema Z_SCHEMA = new Schema(NestedField.required(0, Z_COLUMN, Types.BinaryType.get()));
   private static final org.apache.iceberg.SortOrder Z_SORT_ORDER = org.apache.iceberg.SortOrder.builderFor(Z_SCHEMA)
       .sortBy(Z_COLUMN, SortDirection.ASC, NullOrder.NULLS_LAST)
       .build();
-
   /**
    * Controls the amount of bytes interleaved in the ZOrder Algorithm. Default is all bytes being interleaved.
    */
   private static final String MAX_OUTPUT_SIZE_KEY = "max-output-size";
   private static final int DEFAULT_MAX_OUTPUT_SIZE = Integer.MAX_VALUE;
-
   /**
    * Controls the number of bytes considered from an input column of a type with variable length (String, Binary).
    * Default is to use the same size as primitives {@link ZOrderByteUtils#PRIMITIVE_BUFFER_SIZE}
    */
   private static final String VAR_LENGTH_CONTRIBUTION_KEY = "var-length-contribution";
   private static final int DEFAULT_VAR_LENGTH_CONTRIBUTION = ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
-
-  public static final String SPATIAL_CURVE_STRATEGY_TYPE_KEY = "spatial-curve-strategy-type";
-  public static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
-
-  public static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "build_range_sample_size";
-  public static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
-
   private final List<String> zOrderColNames;
 
   private int maxOutputSize;
@@ -220,7 +213,8 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
       List<StructField> zOrderColumns = zOrderColNames
           .stream()
           .map(scanDF.schema()::apply)
-          .collect(Collectors.toList());
+          .
+          collect(Collectors.toList());
 
       Column zValueArray;
       switch (spatialCurveStrategyType) {
@@ -238,15 +232,10 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
           Broadcast<Object[]> broadcast = spark()
               .sparkContext()
               .broadcast(rangeBound, ClassTag.apply(Object[].class));
-          zValueArray = functions.array(zOrderColumns.stream().map(colStruct -> {
-            try {
-              // TODO  Unsupported data types throw exceptions
-              return zOrderUDF
-                  .sortedNew(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value());
-            } catch (UnsupportedDataTypeException e) {
-              throw new RuntimeException("cause : ", e);
-            }
-          }).toArray(Column[]::new));
+          zValueArray = functions.array(zOrderColumns.stream()
+              .map(colStruct -> zOrderUDF
+                  .sortedSample(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value()))
+              .toArray(Column[]::new));
           break;
 
         default:

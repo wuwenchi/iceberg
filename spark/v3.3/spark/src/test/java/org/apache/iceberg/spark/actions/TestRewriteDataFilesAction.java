@@ -22,7 +22,12 @@ package org.apache.iceberg.spark.actions;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.Arrays;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -30,11 +35,12 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.apache.commons.math3.random.RandomDataGenerator;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.shaded.javax.activation.UnsupportedDataTypeException;
 import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
@@ -81,17 +87,16 @@ import org.apache.iceberg.spark.FileScanTaskSetManager;
 import org.apache.iceberg.spark.SparkTableUtil;
 import org.apache.iceberg.spark.SparkTestBase;
 import org.apache.iceberg.spark.actions.BaseRewriteDataFilesSparkAction.RewriteExecutionContext;
+import org.apache.iceberg.spark.source.SortedSampleRecord;
 import org.apache.iceberg.spark.source.ThreeColumnRecord;
 import org.apache.iceberg.types.Comparators;
 import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.Pair;
-import org.apache.spark.sql.Column;
+import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.functions;
-import org.apache.spark.sql.types.StructField;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -1100,51 +1105,56 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   @Test
-  public void xzwTest() {
-    Table table = createTypeTestTable();
-    shouldHaveFiles(table, 10);
+  public void testZOderSample() {
+    Schema schema = new Schema(
+        optional(1, "c1", Types.LongType.get()),
+        optional(2, "c2", Types.DoubleType.get()),
+        optional(3, "c3", Types.FloatType.get()),
+        optional(4, "c4", Types.IntegerType.get()),
+        optional(5, "c5", Types.IntegerType.get()),
+        optional(6, "c6", Types.StringType.get()),
+        optional(7, "c7", Types.DateType.get()),
+        optional(8, "c8", Types.TimestampType.withoutZone()),
+        optional(9, "c9", Types.DecimalType.of(4, 2))
+    );
 
-    Dataset<Row> rowDf = spark.read().format("iceberg").load(tableLocation);
-    List<StructField> zOrderColumns = Arrays.stream(rowDf.schema().names())
-        .map(rowDf.schema()::apply)
-        .collect(Collectors.toList());
 
-    int varLengthContribution = 0;
-    int maxOutputSize = 0;
+    Table table = TABLES.create(schema, PartitionSpec.builderFor(schema).bucket("c1",10).build(), Maps.newHashMap(),
+        tableLocation);
+    writeSampleRecords(100, 100, 10, 1, 20, 5);
 
-    SparkZOrderUDF zOrderUDF = new SparkZOrderUDF(zOrderColumns.size(), varLengthContribution, maxOutputSize);
-    zOrderColumns = Arrays
-        .stream(Arrays.copyOf(zOrderColumns.toArray(), zOrderColumns.size() - 1, StructField[].class))
-        .collect(Collectors.toList());
+    //spark.sparkContext().getConf().set("executor","1");
 
-    List<StructField> finalZOrderColumns = zOrderColumns;
 
-    // TODO It doesn't make any sense, I don't understand why I wrote that
-    AssertHelpers.assertThrows("RuntimeException", RuntimeException.class, () -> {
-      functions.array(finalZOrderColumns.stream().map(colStruct -> {
-        try {
-          return zOrderUDF
-              .sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[] {1, 2, 3, 4, 5});
-        } catch (UnsupportedDataTypeException e) {
-          // I know he's going to throw this RuntimeException exception, so what's the point of my test
-          throw new RuntimeException(e);
-        }
-      }).toArray(Column[]::new));
-    });
 
-    // 去掉不支持的类型字段
-    zOrderColumns = Arrays
-        .stream(Arrays.copyOf(zOrderColumns.toArray(), zOrderColumns.size() - 2, StructField[].class))
-        .collect(Collectors.toList());
+    AssertHelpers.assertThrows("Type not supported should throw an exception", IllegalArgumentException.class,
+        () -> {
+          basicRewrite(table)
+              .zOrder("c1", "c2")
+              .option(SortStrategy.MAX_FILE_SIZE_BYTES, Integer.toString((averageFileSize(table) / 2) + 2))
+              .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
+              .option(SortStrategy.MIN_INPUT_FILES, "1")
+              .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
+              // 采样数量
+              .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "100")
+              // 配置边界  理想 - 结果n-1
+              .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
+              .execute();
+        });
 
-    // TODO All the best
-    functions.array(zOrderColumns.stream().map(colStruct -> {
-      try {
-        return zOrderUDF.sortedNew(functions.col(colStruct.name()), colStruct.dataType(), new Object[] {1, 2, 3, 4, 5});
-      } catch (UnsupportedDataTypeException e) {
-        throw new RuntimeException(e);
-      }
-    }).toArray(Column[]::new));
+    // Make sure the boundary subscripts are as expected
+    Assert.assertEquals(
+        "Index subscript must be 1",
+        1,
+        SparkZOrderUDFUtils.getLongBound(20L, new Long[] {10L, 20L, 30L}));
+    Assert.assertEquals(
+        "Index subscript must be 1",
+        1,
+        SparkZOrderUDFUtils.getStringBound("f", new String[] {"c", "f", "i"}));
+    Assert.assertEquals(
+        "Index subscript must be 1",
+        1,
+        SparkZOrderUDFUtils.getStringBound("F", new String[] {"C", "F", "I"}));
   }
 
   @Test
@@ -1491,7 +1501,10 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         optional(7, "stringCol", Types.StringType.get()),
         optional(8, "booleanCol", Types.BooleanType.get()),
         optional(9, "binaryCol", Types.BinaryType.get()));
+    return createTypeTestTable(schema);
+  }
 
+  private Table createTypeTestTable(Schema schema) {
     Map<String, String> options = Maps.newHashMap();
     Table table = TABLES.create(schema, PartitionSpec.unpartitioned(), options, tableLocation);
 
@@ -1520,6 +1533,46 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
 
   private void writeRecords(int files, int numRecords) {
     writeRecords(files, numRecords, 0);
+  }
+
+  private void writeSampleRecords(int files, int numRecords, int partitions, int min, int max, int len) {
+    ArrayList<SortedSampleRecord> recordList = Lists.newArrayList();
+    RandomDataGenerator r = new RandomDataGenerator();
+    Random rd = new Random();
+    long c1;
+    for (int i = 0; i < numRecords; i++) {
+      if (partitions > 0) {
+        c1 = r.nextLong(min, max) % partitions;
+      } else {
+        c1 = r.nextLong(min, max);
+      }
+      // Generate a completely random record
+      recordList.add(new SortedSampleRecord(
+          c1,
+          r.nextUniform(min, max),
+          (float) r.nextUniform(min, max),
+          r.nextInt(min, max),
+          (short) r.nextInt(min, max),
+          r.nextHexString(len),
+          new Date(System.currentTimeMillis() - rd.nextInt(1000000)),
+          new Timestamp(System.currentTimeMillis() - rd.nextInt(1000000)),
+          new BigDecimal(Long.valueOf(r.nextLong(min, max)).doubleValue(), new MathContext(4)).setScale(
+              2,
+              RoundingMode.DOWN)));
+    }
+
+    Collections.shuffle(recordList, new Random(100));
+
+    spark.sparkContext().conf().set("spark.sql.iceberg.handle-timestamp-without-timezone", "true");
+    spark.createDataFrame(recordList,
+            SortedSampleRecord.class)
+        .repartition(files)
+        .select("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9")
+        .sortWithinPartitions("c1")
+        .write()
+        .format("iceberg")
+        .mode("append")
+        .save(tableLocation);
   }
 
   private void writeRecords(int files, int numRecords, int partitions) {
