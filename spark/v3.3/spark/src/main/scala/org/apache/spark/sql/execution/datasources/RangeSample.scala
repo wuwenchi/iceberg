@@ -19,40 +19,36 @@
 
 package org.apache.spark.sql.execution.datasources
 
+import org.apache.spark.rdd.PartitionPruningRDD
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types._
+import org.apache.spark.util.random.SamplingUtils
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.hashing.byteswap32
 
-import org.apache.spark.rdd.{PartitionPruningRDD, RDD}
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types._
-import org.apache.spark.util.random.SamplingUtils
+class RangeSample[K: ClassTag](
+                                zorderPartitions: Int,
+                                rdd: RDD[Seq[K]],
+                                val samplePointsPerPartitionHint: Int
+                              ) extends Serializable {
 
-class ZorderPartitions[K: ClassTag](
-                                     zEncodeNum: Int,
-                                     rdd: RDD[Seq[K]],
-                                     val samplePointsPerPartitionHint: Int = 20
-                                   ) extends Serializable {
-  def this(zEncodeNum: Int, rdd: RDD[Seq[K]]) = {
-    this(zEncodeNum, rdd, samplePointsPerPartitionHint = 20)
-  }
 
   import scala.collection.mutable.ArrayBuffer
   // TODO 改一改
   // We allow zEncodeNum = 0, which happens when sorting an empty RDD under the default settings.
-  require(zEncodeNum >= 0, s"Number of zEncodeNum cannot be negative but found $zEncodeNum.")
-  require(samplePointsPerPartitionHint > 0,
-    s"Sample points per partition must be greater than 0 but found $samplePointsPerPartitionHint")
+  require(zorderPartitions >= 0, s"Number of partitions cannot be negative but found $zorderPartitions.")
 
   def getRangeBounds: ArrayBuffer[(Seq[K], Float)] = {
-    if (zEncodeNum <= 1) {
+    if (zorderPartitions <= 1) {
       import scala.collection.mutable.ArrayBuffer
       ArrayBuffer.empty[(Seq[K], Float)]
     } else {
       // This is the sample size we need to have roughly balanced output partitions, capped at 1M.
       // Cast to double to avoid overflowing ints or longs
-      val sampleSize = math.min(samplePointsPerPartitionHint.toDouble * zEncodeNum, 1e6)
+      val sampleSize = math.min(samplePointsPerPartitionHint.toDouble * zorderPartitions, 1e6)
       // Assume the input partitions are roughly balanced and over-sample a little bit.
       val sampleSizePerPartition = math.ceil(3.0 * sampleSize / rdd.partitions.length).toInt
       //      val sampleSizePerPartition = math.ceil(3.0 * sampleSize / rdd.partitions.length).toInt
@@ -203,7 +199,7 @@ object RangeSampleSort {
       values
     }
 
-    val sample = new ZorderPartitions(zOrderBounds, sampleRdd, samplePointsPerPartitionHint)
+    val sample = new RangeSample(zOrderBounds, sampleRdd, samplePointsPerPartitionHint)
     // get all samples
     val candidates: mutable.Seq[(Seq[Any], Float)] = sample.getRangeBounds
     // calculates boundZ
