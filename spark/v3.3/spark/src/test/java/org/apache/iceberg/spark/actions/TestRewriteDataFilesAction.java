@@ -28,6 +28,7 @@ import java.math.RoundingMode;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -35,7 +36,6 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -94,9 +94,10 @@ import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.Pair;
-import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.execution.datasources.RangeSampleSort$;
+import org.apache.spark.sql.types.StructField;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -104,6 +105,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mockito;
+import scala.collection.JavaConverters;
 
 import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
@@ -1075,6 +1077,8 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
             // Divide files in 2
             .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
             .option(SortStrategy.MIN_INPUT_FILES, "1")
+
+            .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
             .execute();
 
     Assert.assertEquals("Should have 1 fileGroups", 1, result.rewriteResults().size());
@@ -1105,7 +1109,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   @Test
-  public void testZOderSample() {
+  public void testZOderPartitions() {
     Schema schema = new Schema(
         optional(1, "c1", Types.LongType.get()),
         optional(2, "c2", Types.DoubleType.get()),
@@ -1118,43 +1122,62 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         optional(9, "c9", Types.DecimalType.of(4, 2))
     );
 
-
-    Table table = TABLES.create(schema, PartitionSpec.builderFor(schema).bucket("c1",10).build(), Maps.newHashMap(),
+    Table table = TABLES.create(schema, PartitionSpec.unpartitioned(), Maps.newHashMap(),
         tableLocation);
-    writeSampleRecords(100, 100, 10, 1, 20, 5);
+    int partitions = 2;
+    writeSampleRecords(10, 500, partitions, 1, 100, 5);
 
-    //spark.sparkContext().getConf().set("executor","1");
+    // spark.sparkContext().getConf().set("num-executors","2");
 
+    List<String> zOrderColNames = Arrays.asList("c1", "c2");
+    // Dataset<Row> scanDF = spark.read().format("iceberg").load(table.name());
 
+    // List<StructField> zOrderColumns = zOrderColNames
+    //     .stream()
+    //     .map(scanDF.schema()::apply)
+    //     .collect(Collectors.toList());
+    //
+    // Object[][] rangeBound = RangeSampleSort$.MODULE$
+    //     .getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), 10, 10);
+    //
+    // // Make sure the bounds are correct
+    // Assert.assertEquals("The number of zorder columns is 2,bounds values should be of equal length",
+    //     2, rangeBound.length);
+    //
+    // Assert.assertTrue(
+    //     "C1 is a partition field. When the number of partitions is 2, the value can only be 0 or 1." +
+    //         " Therefore its length must be less than or equal to 2",
+    //     rangeBound[0].length <= 2 && rangeBound[0].length > 0);
+    //
+    // Assert.assertTrue(
+    //     "The bounds value of field C2 should be close to the size we set",
+    //     rangeBound[1].length <= 6 && rangeBound[1].length > 0);
+    //
+    // // Make sure the boundary subscripts are as expected
+    // Assert.assertEquals(
+    //     "Index subscript must be 1",
+    //     1, SparkZOrderUDFUtils.getLongBound(20L, new Long[] {10L, 20L, 30L}));
+    // Assert.assertEquals(
+    //     "Index subscript must be 1",
+    //     1, SparkZOrderUDFUtils.getStringBound("f", new String[] {"c", "f", "i"}));
+    // Assert.assertEquals(
+    //     "Index subscript must be 1",
+    //     1, SparkZOrderUDFUtils.getStringBound("F", new String[] {"C", "F", "I"}));
 
     AssertHelpers.assertThrows("Type not supported should throw an exception", IllegalArgumentException.class,
         () -> {
           basicRewrite(table)
-              .zOrder("c1", "c2")
+              .zOrder((String[]) zOrderColNames.toArray())
               .option(SortStrategy.MAX_FILE_SIZE_BYTES, Integer.toString((averageFileSize(table) / 2) + 2))
               .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
               .option(SortStrategy.MIN_INPUT_FILES, "1")
               .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
-              // 采样数量
-              .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "100")
               // 配置边界  理想 - 结果n-1
               .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
+              .option(SparkZOrderStrategy.SAMPLE_POINTS_PER_PARTITION_HINT_KEY, "30")
               .execute();
         });
 
-    // Make sure the boundary subscripts are as expected
-    Assert.assertEquals(
-        "Index subscript must be 1",
-        1,
-        SparkZOrderUDFUtils.getLongBound(20L, new Long[] {10L, 20L, 30L}));
-    Assert.assertEquals(
-        "Index subscript must be 1",
-        1,
-        SparkZOrderUDFUtils.getStringBound("f", new String[] {"c", "f", "i"}));
-    Assert.assertEquals(
-        "Index subscript must be 1",
-        1,
-        SparkZOrderUDFUtils.getStringBound("F", new String[] {"C", "F", "I"}));
   }
 
   @Test
@@ -1556,20 +1579,24 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
           r.nextHexString(len),
           new Date(System.currentTimeMillis() - rd.nextInt(1000000)),
           new Timestamp(System.currentTimeMillis() - rd.nextInt(1000000)),
-          new BigDecimal(Long.valueOf(r.nextLong(min, max)).doubleValue(), new MathContext(4)).setScale(
+          new BigDecimal(Long.valueOf(r.nextLong(min, 10)).doubleValue(), new MathContext(4)).setScale(
               2,
               RoundingMode.DOWN)));
     }
 
     Collections.shuffle(recordList, new Random(100));
 
-    spark.sparkContext().conf().set("spark.sql.iceberg.handle-timestamp-without-timezone", "true");
-    spark.createDataFrame(recordList,
+    spark.sparkContext().conf().set("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
+        .set("spark.sql.ansi.enabled", "false")
+        .set("spark.sql.decimalOperations.allowPrecisionLoss", "false");
+    spark.createDataFrame(
+            recordList,
             SortedSampleRecord.class)
         .repartition(files)
         .select("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9")
         .sortWithinPartitions("c1")
         .write()
+        .option("spark.sql.ansi.enabled", "false")
         .format("iceberg")
         .mode("append")
         .save(tableLocation);

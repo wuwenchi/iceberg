@@ -19,15 +19,14 @@
 
 package org.apache.iceberg.spark.actions;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.Arrays;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.NullOrder;
@@ -69,6 +68,7 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
   public static final String DEFAULT_SPATIAL_CURVE_STRATEGY_TYPE = "direct";
   public static final String BUILD_RANGE_SAMPLE_SIZE_KEY = "build_range_sample_size";
   public static final int DEFAULT_BUILD_RANGE_SAMPLE_SIZE = 100000;
+  public static final String SAMPLE_POINTS_PER_PARTITION_HINT_KEY = "sample-points-per-partition-hint";
   private static final Logger LOG = LoggerFactory.getLogger(SparkZOrderStrategy.class);
   private static final String Z_COLUMN = "ICEZVALUE";
   private static final Schema Z_SCHEMA = new Schema(NestedField.required(0, Z_COLUMN, Types.BinaryType.get()));
@@ -86,12 +86,13 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
    */
   private static final String VAR_LENGTH_CONTRIBUTION_KEY = "var-length-contribution";
   private static final int DEFAULT_VAR_LENGTH_CONTRIBUTION = ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
+  private static final int DEFAULT_SAMPLE_POINTS_PER_PARTITION_HINT = 20;
   private final List<String> zOrderColNames;
-
   private int maxOutputSize;
   private int varLengthContribution;
   private SpatialCurveStrategyType spatialCurveStrategyType;
   private int buildRangeSampleSize;
+  private int samplePointsPerPartitionHint;
 
   public SparkZOrderStrategy(Table table, SparkSession spark, List<String> zOrderColNames) {
     super(table, spark);
@@ -131,6 +132,7 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
         .add(MAX_OUTPUT_SIZE_KEY)
         .add(SPATIAL_CURVE_STRATEGY_TYPE_KEY)
         .add(BUILD_RANGE_SAMPLE_SIZE_KEY)
+        .add(SAMPLE_POINTS_PER_PARTITION_HINT_KEY)
         .build();
   }
 
@@ -164,6 +166,15 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
     Preconditions.checkArgument(maxOutputSize > 0,
         "Cannot have the interleaved ZOrder value use less than 1 byte, %s was set to %s",
         MAX_OUTPUT_SIZE_KEY, maxOutputSize);
+
+    samplePointsPerPartitionHint = PropertyUtil.propertyAsInt(
+        options,
+        SAMPLE_POINTS_PER_PARTITION_HINT_KEY,
+        DEFAULT_SAMPLE_POINTS_PER_PARTITION_HINT);
+    Preconditions.checkArgument(samplePointsPerPartitionHint > 0,
+        "Cannot have ZOrder use a partition hint that is less than 1, %s was set to %s",
+        SAMPLE_POINTS_PER_PARTITION_HINT_KEY, samplePointsPerPartitionHint);
+
     return this;
   }
 
@@ -213,8 +224,7 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
       List<StructField> zOrderColumns = zOrderColNames
           .stream()
           .map(scanDF.schema()::apply)
-          .
-          collect(Collectors.toList());
+          .collect(Collectors.toList());
 
       Column zValueArray;
       switch (spatialCurveStrategyType) {
@@ -228,10 +238,12 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
 
         case SAMPLE:
           Object[] rangeBound = RangeSampleSort$.MODULE$
-              .getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), buildRangeSampleSize);
-          Broadcast<Object[]> broadcast = spark()
-              .sparkContext()
-              .broadcast(rangeBound, ClassTag.apply(Object[].class));
+              .getRangeBound(
+                  scanDF,
+                  JavaConverters.asScalaBuffer(zOrderColumns),
+                  buildRangeSampleSize,
+                  samplePointsPerPartitionHint);
+          Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(rangeBound, ClassTag.apply(Object[].class));
           zValueArray = functions.array(zOrderColumns.stream()
               .map(colStruct -> zOrderUDF
                   .sortedSample(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value()))

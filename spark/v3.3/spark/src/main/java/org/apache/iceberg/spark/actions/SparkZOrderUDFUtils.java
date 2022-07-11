@@ -19,108 +19,117 @@
 
 package org.apache.iceberg.spark.actions;
 
-import org.apache.iceberg.util.ZOrderByteUtils;
-import org.apache.spark.sql.api.java.UDF1;
-
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.function.BiFunction;
+import org.apache.spark.sql.api.java.UDF1;
+import org.apache.spark.sql.expressions.UserDefinedFunction;
+import org.apache.spark.sql.functions;
+import org.apache.spark.sql.types.DataTypes;
 
 import static org.apache.iceberg.spark.actions.SparkZOrderUDF.PRIMITIVE_EMPTY;
+import static org.apache.iceberg.util.ZOrderByteUtils.longToOrderedBytes;
 
-class SparkZOrderUDFUtils {
+class SparkZOrderUDFUtils  implements Serializable {
 
-  static UDF1<Long, Object> longToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Long, byte[]> longToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return value -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value, candidateBounds), buffer).array();
+      return longToOrderedBytes(longGetBound(value, candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Double, Object> doubleToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UserDefinedFunction toUDF(UDF1 udf,String udfName){
+   return functions.udf(udf, DataTypes.BinaryType).withName(udfName);
+  }
+
+
+
+
+  static UDF1<Double, byte[]> doubleToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return value -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(Double.doubleToLongBits(value), candidateBounds), buffer).array();
+      return longToOrderedBytes(longGetBound(Double.doubleToLongBits(value), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Float, Object> floatToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Float, byte[]> floatToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return value -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(Double.doubleToLongBits(value), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(Double.doubleToLongBits(value), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Integer, Object> integerToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Integer, byte[]> integerToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (Integer value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Short, Object> shortToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Short, byte[]> shortToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (Short value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<String, Object> stringToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<String, byte[]> stringToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (String value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getStringBound(value, candidateBounds), buffer).array();
+      return longToOrderedBytes(getStringBound(value, candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Date, Object> dateToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Date, byte[]> dateToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (Date value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value.getTime(), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(value.getTime(), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Timestamp, Object> timestampToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Timestamp, byte[]> timestampToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (Timestamp value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value.getTime(), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(value.getTime(), candidateBounds), buffer).array();
     };
   }
 
-  static UDF1<Byte, Object> byteToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<Byte, byte[]> byteToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return value -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound((long) value, candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound((long) value, candidateBounds), buffer).array();
     };
-
   }
 
-  static UDF1<BigDecimal, Object> decimalToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
+  static UDF1<BigDecimal, byte[]> decimalToBytesUDF(ByteBuffer buffer, Object[] candidateBounds) {
     return (BigDecimal value) -> {
       if (value == null) {
         return PRIMITIVE_EMPTY;
       }
-      return ZOrderByteUtils.intToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
+      return longToOrderedBytes(getLongBound(value.longValue(), candidateBounds), buffer).array();
     };
   }
 
@@ -137,16 +146,46 @@ class SparkZOrderUDFUtils {
 
   /**
    * 确定单条数据的边界下标索引
-   * @param key
-   * @param candidateBounds
-   * @param f
-   * @return
    */
 
-  private static int getBound(Object key, Object[] candidateBounds, BiFunction<Object, Object, Boolean> f) {
+  private static int getBound(Object key, Object[] candidateBounds, BiFunc f) {
     int bound = 0;
     if (candidateBounds.length <= 128) {
       while (bound < candidateBounds.length && f.apply(key, candidateBounds[bound])) {
+        bound += 1;
+      }
+    } else {
+      bound = Arrays.binarySearch(candidateBounds, key);
+      if (bound < 0) {
+        bound = -bound - 1;
+      }
+      if (bound > candidateBounds.length) {
+        bound = candidateBounds.length;
+      }
+    }
+    return bound;
+  }
+  private static int longGetBound(Object key, Object[] candidateBounds) {
+    int bound = 0;
+    if (candidateBounds.length <= 128) {
+      while (bound < candidateBounds.length && gt((Long) key, (Long) candidateBounds[bound])) {
+        bound += 1;
+      }
+    } else {
+      bound = Arrays.binarySearch(candidateBounds, key);
+      if (bound < 0) {
+        bound = -bound - 1;
+      }
+      if (bound > candidateBounds.length) {
+        bound = candidateBounds.length;
+      }
+    }
+    return bound;
+  }
+  private static int stringGetBound(Object key, Object[] candidateBounds) {
+    int bound = 0;
+    if (candidateBounds.length <= 128) {
+      while (bound < candidateBounds.length && gt((String) key, (String) candidateBounds[bound])) {
         bound += 1;
       }
     } else {
@@ -169,4 +208,8 @@ class SparkZOrderUDFUtils {
     return x.compareTo(y) > 0;
   }
 
+
+  interface BiFunc extends BiFunction<Object,Object,Boolean>,Serializable{
+
+  }
 }

@@ -19,22 +19,24 @@
 
 package org.apache.spark.sql.execution.datasources
 
-import org.apache.spark.rdd.PartitionPruningRDD
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types._
-import org.apache.spark.util.random.SamplingUtils
-
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.hashing.byteswap32
 
-class RangeSample[K: ClassTag, V](
-                                   zEncodeNum: Int,
-                                   rdd: RDD[Seq[K]],
-                                   val samplePointsPerPartitionHint: Int
-                                 ) extends Serializable {
+import org.apache.spark.rdd.{PartitionPruningRDD, RDD}
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types._
+import org.apache.spark.util.random.SamplingUtils
+
+class ZorderPartitions[K: ClassTag](
+                                     zEncodeNum: Int,
+                                     rdd: RDD[Seq[K]],
+                                     val samplePointsPerPartitionHint: Int = 20
+                                   ) extends Serializable {
+  def this(zEncodeNum: Int, rdd: RDD[Seq[K]]) = {
+    this(zEncodeNum, rdd, samplePointsPerPartitionHint = 20)
+  }
 
   import scala.collection.mutable.ArrayBuffer
   // TODO 改一改
@@ -43,7 +45,7 @@ class RangeSample[K: ClassTag, V](
   require(samplePointsPerPartitionHint > 0,
     s"Sample points per partition must be greater than 0 but found $samplePointsPerPartitionHint")
 
-  def getRangeBounds(): ArrayBuffer[(Seq[K], Float)] = {
+  def getRangeBounds: ArrayBuffer[(Seq[K], Float)] = {
     if (zEncodeNum <= 1) {
       import scala.collection.mutable.ArrayBuffer
       ArrayBuffer.empty[(Seq[K], Float)]
@@ -91,6 +93,28 @@ class RangeSample[K: ClassTag, V](
     }
   }
 
+  /**
+   * Sketches the input RDD via reservoir sampling on each partition.
+   *
+   * @param rdd                    the input RDD to sketch
+   * @param sampleSizePerPartition max sample size per partition
+   * @return (total number of items, an array of (partitionId, number of items, sample))
+   */
+  def sketch[K: ClassTag](
+                           rdd: RDD[K],
+                           sampleSizePerPartition: Int): (Long, Array[(Int, Long, Array[K])]) = {
+    val shift = rdd.id
+    // val classTagK = classTag[K] // to avoid serializing the entire partitioner object
+    val sketched = rdd.mapPartitionsWithIndex { (idx, iter) =>
+      val seed = byteswap32(idx ^ (shift << 16))
+      val (sample, n) = SamplingUtils.reservoirSampleAndCount(
+        iter, sampleSizePerPartition, seed)
+      Iterator((idx, n, sample))
+    }.collect()
+    val numItems = sketched.map(_._2).sum
+    (numItems, sketched)
+  }
+
   def determineBounds[K: Ordering : ClassTag](candidates: ArrayBuffer[(K, Float)], partitions: Int): Array[K] = {
     val ordering = implicitly[Ordering[K]]
     val ordered = candidates.sortBy(_._1)
@@ -119,28 +143,6 @@ class RangeSample[K: ClassTag, V](
     }
     bounds.toArray
   }
-
-  /**
-   * Sketches the input RDD via reservoir sampling on each partition.
-   *
-   * @param rdd                    the input RDD to sketch
-   * @param sampleSizePerPartition max sample size per partition
-   * @return (total number of items, an array of (partitionId, number of items, sample))
-   */
-  def sketch[K: ClassTag](
-                           rdd: RDD[K],
-                           sampleSizePerPartition: Int): (Long, Array[(Int, Long, Array[K])]) = {
-    val shift = rdd.id
-    // val classTagK = classTag[K] // to avoid serializing the entire partitioner object
-    val sketched = rdd.mapPartitionsWithIndex { (idx, iter) =>
-      val seed = byteswap32(idx ^ (shift << 16))
-      val (sample, n) = SamplingUtils.reservoirSampleAndCount(
-        iter, sampleSizePerPartition, seed)
-      Iterator((idx, n, sample))
-    }.collect()
-    val numItems = sketched.map(_._2).sum
-    (numItems, sketched)
-  }
 }
 
 object RangeSampleSort {
@@ -149,49 +151,51 @@ object RangeSampleSort {
 
   def getRangeBound(df: DataFrame,
                     zOrderField: Seq[StructField],
-                    zOrderBounds: Int)
-  : Array[Array[_ >: String with Long]] = {
+                    zOrderBounds: Int,
+                    samplePointsPerPartitionHint: Int): Array[Array[_ >: String with Long]] = {
     import scala.collection.convert.ImplicitConversions.`iterable AsScalaIterable`
     import scala.jdk.CollectionConverters.asJavaIterableConverter
 
     val zOrderIndexField = zOrderField.map { field =>
       field.dataType match {
-        // TODO 比 hudi 多一个binary，少一个 DecimalType
-        case LongType | BooleanType | BinaryType |
+        // TODO 目前不支持BinaryType
+        case LongType | BooleanType | // BinaryType |
              DoubleType | FloatType | StringType | IntegerType | DateType | TimestampType | ShortType | ByteType =>
+          (df.schema.fields.indexOf(field), field)
+        case _: DecimalType =>
           (df.schema.fields.indexOf(field), field)
         case _ =>
           throw new IllegalArgumentException(String.format("Unsupported type for " + field.dataType))
       }
     }
 
-    val sampleRdd: RDD[Seq[Any]] = df.rdd.map { row: Row =>
+    val sampleRdd = df.rdd.map { row: Row =>
       val values = zOrderIndexField.map { case (index, field) =>
         field.dataType match {
           case LongType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getLong(index).longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getLong(index)
           case DoubleType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getDouble(index).longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getDouble(index).toLong
           case IntegerType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getInt(index).longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getInt(index).toLong
           case FloatType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getFloat(index).longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getFloat(index).toLong
           case StringType =>
             if (row.isNullAt(index)) "" else row.getString(index)
           case DateType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getDate(index).getTime.longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getDate(index).getTime
           case TimestampType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getTimestamp(index).getTime.longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getTimestamp(index).getTime
           case ByteType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getByte(index).longValue()
+            if (row.isNullAt(index)) Long.MaxValue else row.getByte(index).toLong
           case ShortType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).longValue()
-          //          // TODO 需要支持吗？
-          //          case DecimalType =>
-          //            if (row.isNullAt(index)) Long.MaxValue else row.getDecimal(index)
-          // TODO get BinaryType
-          //          case BinaryType =>
-          //            if (row.isNullAt(index)) "" else row.getAs[Array[Byte]](index)
+            if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).toLong
+          case decimalType: DecimalType =>
+            if (row.isNullAt(index)) Long.MaxValue else row.getDecimal(index).longValue()
+          // case BinaryType =>
+          //   if (row.isNullAt(index)) Long.MaxValue else {
+          //     row.getAs[Array[Byte]](index).map(b => b.toLong).sum
+          //   }
           case _ =>
             null
         }
@@ -199,13 +203,10 @@ object RangeSampleSort {
       values
     }
 
-    // TODO 改成配置？
-    // XZW DEBUG
-    val hint = 20
-    val sample = new RangeSample(zOrderBounds, sampleRdd, hint)
+    val sample = new ZorderPartitions(zOrderBounds, sampleRdd, samplePointsPerPartitionHint)
     // get all samples
-    val candidates: mutable.Seq[(Seq[Any], Float)] = sample.getRangeBounds()
-    // calculates bound
+    val candidates: mutable.Seq[(Seq[Any], Float)] = sample.getRangeBounds
+    // calculates boundZ
     val sampleBounds = {
       val candidateColNumber = candidates.head._1.length
       (0 until candidateColNumber).map { idx =>

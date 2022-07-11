@@ -19,6 +19,7 @@
 
 package org.apache.iceberg.util;
 
+import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharsetEncoder;
@@ -41,7 +42,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
  * Some implementation is taken from
  * https://github.com/apache/hbase/blob/master/hbase-common/src/main/java/org/apache/hadoop/hbase/util/OrderedBytes.java
  */
-public class ZOrderByteUtils {
+public class ZOrderByteUtils implements Serializable {
 
   public static final int PRIMITIVE_BUFFER_SIZE = 8;
 

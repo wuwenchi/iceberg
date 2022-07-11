@@ -14,12 +14,13 @@
 
 package org.apache.iceberg.spark.source;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Objects;
 
-public class SortedSampleRecord {
+public class SortedSampleRecord implements Serializable {
   private Long c1;
   private Double c2;
   private Float c3;
