@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -1077,8 +1078,6 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
             // Divide files in 2
             .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
             .option(SortStrategy.MIN_INPUT_FILES, "1")
-
-            .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
             .execute();
 
     Assert.assertEquals("Should have 1 fileGroups", 1, result.rewriteResults().size());
@@ -1110,6 +1109,71 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
 
   @Test
   public void testZOderPartitions() {
+    int partitions = 2;
+    int originalFiles = 20;
+
+    Table table = createSampleRecordTable(partitions, SCALE, originalFiles);
+
+    shouldHaveLastCommitUnsorted(table, "c3");
+    shouldHaveLastCommitUnsorted(table, "c4");
+    shouldHaveLastCommitUnsorted(table, "c6");
+    shouldHaveFiles(table, originalFiles);
+
+    List<Object[]> originalData = currentData();
+    double originalFilesC3 = percentFilesRequired(table, "c3", 123.456);
+    double originalFilesC4 = percentFilesRequired(table, "c4", 123456);
+    double originalFilesC6 = percentFilesRequired(table, "c6", "abcde");
+    double originalFilesC2C3 = percentFilesRequired(table, new String[] {"c2", "c3"}, new Double[] {123.456, 654.321});
+
+    Assert.assertTrue("Should require all files to scan c3", originalFilesC3 > 0.99);
+    Assert.assertTrue("Should require all files to scan c4", originalFilesC4 > 0.99);
+    Assert.assertTrue("Should require all files to scan c6", originalFilesC6 > 0.99);
+
+    List<String> zOrderColNames = Arrays.asList("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9");
+
+    assertBounds(table, partitions, zOrderColNames);
+
+    RewriteDataFiles.Result result = basicRewrite(table)
+        .zOrder((String[]) zOrderColNames.toArray())
+        .option(SortStrategy.MAX_FILE_SIZE_BYTES, Integer.toString((averageFileSize(table) / 2) + 2))
+        .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
+        .option(SortStrategy.MIN_INPUT_FILES, "1")
+        .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
+        .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
+        .option(SparkZOrderStrategy.SAMPLE_POINTS_PER_PARTITION_HINT_KEY, "30")
+        .execute();
+
+    Assert.assertEquals("Should have 1 fileGroups", 1, result.rewriteResults().size());
+    int zOrderedFilesTotal = Iterables.size(table.currentSnapshot().addedFiles(table.io()));
+    Assert.assertTrue("Should have written 40+ files", zOrderedFilesTotal >= 40);
+
+    table.refresh();
+
+    List<Object[]> postRewriteData = currentData();
+    assertEquals("We shouldn't have changed the data", originalData, postRewriteData);
+
+    shouldHaveSnapshots(table, 2);
+    shouldHaveACleanCache(table);
+
+    double filesScannedC3 = percentFilesRequired(table, "c3", 124.456);
+    double filesScannedC4 = percentFilesRequired(table, "c4", 123456);
+    double filesScannedC6 = percentFilesRequired(table, "c6", "abcde");
+    double filesScannedC2C3 = percentFilesRequired(table, new String[] {"c2", "c3"}, new Double[] {123.456, 654.321});
+
+    Assert.assertTrue(
+        "Should have reduced the number of files required for c3", filesScannedC3 < originalFilesC3);
+    Assert.assertTrue(
+        "Should have reduced the number of files required for c4", filesScannedC4 < originalFilesC4);
+
+    Assert.assertTrue(
+        "Should have reduced the number of files required for c6",
+        filesScannedC6 < originalFilesC6);
+    Assert.assertTrue(
+        "Should have reduced the number of files required for a c2,c3 predicate",
+        filesScannedC2C3 < originalFilesC2C3);
+  }
+
+  private Table createSampleRecordTable(int partitions, int numRecords, int originalFiles) {
     Schema schema = new Schema(
         optional(1, "c1", Types.LongType.get()),
         optional(2, "c2", Types.DoubleType.get()),
@@ -1122,62 +1186,32 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         optional(9, "c9", Types.DecimalType.of(4, 2))
     );
 
-    Table table = TABLES.create(schema, PartitionSpec.unpartitioned(), Maps.newHashMap(),
-        tableLocation);
-    int partitions = 2;
-    writeSampleRecords(10, 500, partitions, 1, 100, 5);
+    Table table = createTable(schema);
+    writeSampleRecords(originalFiles, numRecords, partitions, false);
+    return table;
+  }
 
-    // spark.sparkContext().getConf().set("num-executors","2");
+  private void assertBounds(Table table, int partitions, List<String> zOrderColNames) {
+    Dataset<Row> scanDF = spark.read().format("iceberg").load(table.name()).repartition(partitions);
+    List<StructField> zOrderColumns = zOrderColNames
+        .stream()
+        .map(scanDF.schema()::apply)
+        .collect(Collectors.toList());
 
-    List<String> zOrderColNames = Arrays.asList("c1", "c2");
-    // Dataset<Row> scanDF = spark.read().format("iceberg").load(table.name());
+    Object[] rangeBound = RangeSampleSort$.MODULE$
+        .getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), 6, 6);
 
-    // List<StructField> zOrderColumns = zOrderColNames
-    //     .stream()
-    //     .map(scanDF.schema()::apply)
-    //     .collect(Collectors.toList());
-    //
-    // Object[][] rangeBound = RangeSampleSort$.MODULE$
-    //     .getRangeBound(scanDF, JavaConverters.asScalaBuffer(zOrderColumns), 10, 10);
-    //
-    // // Make sure the bounds are correct
-    // Assert.assertEquals("The number of zorder columns is 2,bounds values should be of equal length",
-    //     2, rangeBound.length);
-    //
-    // Assert.assertTrue(
-    //     "C1 is a partition field. When the number of partitions is 2, the value can only be 0 or 1." +
-    //         " Therefore its length must be less than or equal to 2",
-    //     rangeBound[0].length <= 2 && rangeBound[0].length > 0);
-    //
-    // Assert.assertTrue(
-    //     "The bounds value of field C2 should be close to the size we set",
-    //     rangeBound[1].length <= 6 && rangeBound[1].length > 0);
-    //
-    // // Make sure the boundary subscripts are as expected
-    // Assert.assertEquals(
-    //     "Index subscript must be 1",
-    //     1, SparkZOrderUDFUtils.getLongBound(20L, new Long[] {10L, 20L, 30L}));
-    // Assert.assertEquals(
-    //     "Index subscript must be 1",
-    //     1, SparkZOrderUDFUtils.getStringBound("f", new String[] {"c", "f", "i"}));
-    // Assert.assertEquals(
-    //     "Index subscript must be 1",
-    //     1, SparkZOrderUDFUtils.getStringBound("F", new String[] {"C", "F", "I"}));
+    Assert.assertEquals("The number of bounds should be the same as the number of ZORDER columns",
+        zOrderColNames.size(), rangeBound.length);
 
-    AssertHelpers.assertThrows("Type not supported should throw an exception", IllegalArgumentException.class,
-        () -> {
-          basicRewrite(table)
-              .zOrder((String[]) zOrderColNames.toArray())
-              .option(SortStrategy.MAX_FILE_SIZE_BYTES, Integer.toString((averageFileSize(table) / 2) + 2))
-              .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
-              .option(SortStrategy.MIN_INPUT_FILES, "1")
-              .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
-              // 配置边界  理想 - 结果n-1
-              .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
-              .option(SparkZOrderStrategy.SAMPLE_POINTS_PER_PARTITION_HINT_KEY, "30")
-              .execute();
-        });
+    Assert.assertTrue(
+        "C1 is a partition field. When the number of partitions is 2, the value can only be 0 or 1." +
+            " Therefore its length must be less than or equal to 2",
+        ((long[]) rangeBound[0]).length <= 2 && ((long[]) rangeBound[0]).length > 0);
 
+    Assert.assertTrue(
+        "The bounds value of field C2 should be close to the size we set",
+        ((long[]) rangeBound[1]).length <= 6 && ((long[]) rangeBound[1]).length > 0);
   }
 
   @Test
@@ -1475,9 +1509,13 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   protected Table createTable() {
+    return createTable(SCHEMA);
+  }
+
+  protected Table createTable(Schema schema) {
     PartitionSpec spec = PartitionSpec.unpartitioned();
     Map<String, String> options = Maps.newHashMap();
-    Table table = TABLES.create(SCHEMA, spec, options, tableLocation);
+    Table table = TABLES.create(schema, spec, options, tableLocation);
     table.updateProperties().set(TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES, Integer.toString(5 * 1024)).commit();
     Assert.assertNull("Table must be empty", table.currentSnapshot());
     return table;
@@ -1558,11 +1596,14 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
     writeRecords(files, numRecords, 0);
   }
 
-  private void writeSampleRecords(int files, int numRecords, int partitions, int min, int max, int len) {
+  private void writeSampleRecords(int files, int numRecords, int partitions, boolean random) {
     ArrayList<SortedSampleRecord> recordList = Lists.newArrayList();
     RandomDataGenerator r = new RandomDataGenerator();
     Random rd = new Random();
+    AtomicLong l = new AtomicLong(0);
     long c1;
+    int min = 0, max = SCALE;
+
     for (int i = 0; i < numRecords; i++) {
       if (partitions > 0) {
         c1 = r.nextLong(min, max) % partitions;
@@ -1570,28 +1611,30 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         c1 = r.nextLong(min, max);
       }
       // Generate a completely random record
-      recordList.add(new SortedSampleRecord(
-          c1,
-          r.nextUniform(min, max),
-          (float) r.nextUniform(min, max),
-          r.nextInt(min, max),
-          (short) r.nextInt(min, max),
-          r.nextHexString(len),
-          new Date(System.currentTimeMillis() - rd.nextInt(1000000)),
-          new Timestamp(System.currentTimeMillis() - rd.nextInt(1000000)),
-          new BigDecimal(Long.valueOf(r.nextLong(min, 10)).doubleValue(), new MathContext(4)).setScale(
-              2,
-              RoundingMode.DOWN)));
+      String c6 = r.nextHexString(5);
+      Date c7 = new Date(System.currentTimeMillis() - rd.nextInt(100_000));
+      Timestamp c8 = new Timestamp(System.currentTimeMillis() - rd.nextInt(100_000));
+      BigDecimal c9 = new BigDecimal(Long.valueOf(r.nextLong(min, 10)).doubleValue(), new MathContext(4))
+          .setScale(2, RoundingMode.DOWN);
+
+      if (random) {
+        recordList.add(new SortedSampleRecord(
+            c1, r.nextUniform(min, max), (float) r.nextUniform(min, max), r.nextInt(min, max),
+            (short) r.nextInt(min, max), c6, c7, c8, c9));
+      } else {
+        recordList.add(new SortedSampleRecord(c1, l.doubleValue(), l.floatValue(), l.intValue(), l.shortValue(),
+            c6, c7, c8, c9));
+        l.getAndIncrement();
+      }
     }
 
-    Collections.shuffle(recordList, new Random(100));
-
-    spark.sparkContext().conf().set("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
+    Collections.shuffle(recordList, new Random(10000));
+    spark.sparkContext().conf()
+        .set("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
         .set("spark.sql.ansi.enabled", "false")
         .set("spark.sql.decimalOperations.allowPrecisionLoss", "false");
-    spark.createDataFrame(
-            recordList,
-            SortedSampleRecord.class)
+
+    spark.createDataFrame(recordList, SortedSampleRecord.class)
         .repartition(files)
         .select("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9")
         .sortWithinPartitions("c1")
@@ -1678,11 +1721,22 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         .build();
   }
 
-  private double percentFilesRequired(Table table, String col, String value) {
-    return percentFilesRequired(table, new String[] {col}, new String[] {value});
+  private <T> double percentFilesRequired(Table table, String col, T value) {
+    return percentFilesRequired(table, new String[] {col}, new Object[] {value});
   }
 
-  private double percentFilesRequired(Table table, String[] cols, String[] values) {
+  // private double percentFilesRequired(Table table, String[] cols, String[] values) {
+  //   Preconditions.checkArgument(cols.length == values.length);
+  //   Expression restriction = Expressions.alwaysTrue();
+  //   for (int i = 0; i < cols.length; i++) {
+  //     restriction = Expressions.and(restriction, Expressions.equal(cols[i], values[i]));
+  //   }
+  //   int totalFiles = Iterables.size(table.newScan().planFiles());
+  //   int filteredFiles = Iterables.size(table.newScan().filter(restriction).planFiles());
+  //   return (double) filteredFiles / (double) totalFiles;
+  // }
+
+  private <T> double percentFilesRequired(Table table, String[] cols, T[] values) {
     Preconditions.checkArgument(cols.length == values.length);
     Expression restriction = Expressions.alwaysTrue();
     for (int i = 0; i < cols.length; i++) {

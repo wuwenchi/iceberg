@@ -243,11 +243,18 @@ public class SparkZOrderStrategy extends SparkSortStrategy {
                   JavaConverters.asScalaBuffer(zOrderColumns),
                   buildRangeSampleSize,
                   samplePointsPerPartitionHint);
-          Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(rangeBound, ClassTag.apply(Object[].class));
-          zValueArray = functions.array(zOrderColumns.stream()
-              .map(colStruct -> zOrderUDF
-                  .sortedSample(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value()))
-              .toArray(Column[]::new));
+
+          Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(
+              rangeBound,
+              ClassTag.apply(Object[].class));
+
+          Column[] columns = new Column[zOrderColumns.size()];
+          for (int i = 0; i < zOrderColumns.size() ; i++) {
+            StructField colStruct = zOrderColumns.get(i);
+            columns[i] = zOrderUDF
+                .sortedSample(functions.col(colStruct.name()), colStruct.dataType(), broadcast.value()[i]);
+          }
+          zValueArray = functions.array(columns);
           break;
 
         default:

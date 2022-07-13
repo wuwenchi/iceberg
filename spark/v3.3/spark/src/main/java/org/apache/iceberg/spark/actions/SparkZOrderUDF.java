@@ -22,13 +22,14 @@ package org.apache.iceberg.spark.actions;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.function.Supplier;
+import java.sql.Date;
+import java.sql.Timestamp;
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
-import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.BinaryType;
@@ -48,18 +49,10 @@ import org.apache.spark.sql.types.TimestampType;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.byteToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.dateToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.decimalToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.doubleToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.floatToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.integerToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.longToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.shortToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.stringToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.timestampToBytesUDF;
-import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.toUDF;
+import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.getLongBound;
+import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.getStringBound;
 import static org.apache.iceberg.util.ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
+import static org.apache.iceberg.util.ZOrderByteUtils.longToOrderedBytes;
 
 class SparkZOrderUDF implements Serializable {
   static final byte[] PRIMITIVE_EMPTY = new byte[PRIMITIVE_BUFFER_SIZE];
@@ -84,8 +77,6 @@ class SparkZOrderUDF implements Serializable {
     this.numCols = numCols;
     this.varTypeSize = varTypeSize;
     this.maxOutputSize = maxOutputSize;
-
-    inputBuffers = ThreadLocal.withInitial(() -> new ByteBuffer[numCols]);
   }
 
   private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
@@ -93,7 +84,7 @@ class SparkZOrderUDF implements Serializable {
     inputBuffers = ThreadLocal.withInitial(() -> new ByteBuffer[numCols]);
     inputHolder = ThreadLocal.withInitial(() -> new byte[numCols][]);
     outputBuffer = ThreadLocal.withInitial(() -> ByteBuffer.allocate(totalOutputBytes));
-    encoder = ThreadLocal.withInitial(() -> StandardCharsets.UTF_8.newEncoder());
+    encoder = ThreadLocal.withInitial(StandardCharsets.UTF_8::newEncoder);
   }
 
   private ByteBuffer inputBuffer(int position, int size) {
@@ -121,9 +112,7 @@ class SparkZOrderUDF implements Serializable {
           .array();
     }, DataTypes.BinaryType).withName("TINY_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -138,9 +127,7 @@ class SparkZOrderUDF implements Serializable {
           .array();
     }, DataTypes.BinaryType).withName("SHORT_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -155,9 +142,7 @@ class SparkZOrderUDF implements Serializable {
           .array();
     }, DataTypes.BinaryType).withName("INT_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -172,22 +157,9 @@ class SparkZOrderUDF implements Serializable {
           .array();
     }, DataTypes.BinaryType).withName("LONG_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
-
-  /**
-   * TODO xzw
-   */
-  private Column applyUDF(Supplier<UDF1> supplier, Column column,String udfName) {
-    UserDefinedFunction udf = toUDF(supplier.get(),udfName);
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-    return udf.apply(column);
-  }
-
 
   private UserDefinedFunction floatToOrderedBytesUDF() {
     int position = inputCol;
@@ -200,9 +172,7 @@ class SparkZOrderUDF implements Serializable {
           .array();
     }, DataTypes.BinaryType).withName("FLOAT_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -215,11 +185,9 @@ class SparkZOrderUDF implements Serializable {
       return ZOrderByteUtils
           .doubleToOrderedBytes(value, inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
           .array();
-      }, DataTypes.BinaryType).withName("DOUBLE_ORDERED_BYTES");
+    }, DataTypes.BinaryType).withName("DOUBLE_ORDERED_BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
-
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -231,8 +199,7 @@ class SparkZOrderUDF implements Serializable {
       return buffer.array();
     }, DataTypes.BinaryType).withName("BOOLEAN-LEXICAL-BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(PRIMITIVE_BUFFER_SIZE);
+    increase(PRIMITIVE_BUFFER_SIZE);
     return udf;
   }
 
@@ -245,9 +212,7 @@ class SparkZOrderUDF implements Serializable {
             DataTypes.BinaryType)
         .withName("STRING-LEXICAL-BYTES");
 
-    this.inputCol++;
-    increaseOutputSize(varTypeSize);
-
+    increase(varTypeSize);
     return udf;
   }
 
@@ -260,53 +225,8 @@ class SparkZOrderUDF implements Serializable {
             DataTypes.BinaryType)
         .withName("BYTE-TRUNCATE");
 
-    this.inputCol++;
-    increaseOutputSize(varTypeSize);
-
+    increase(varTypeSize);
     return udf;
-  }
-
-  Column interleaveBytes(Column arrayBinary) {
-    return interleaveUDF.apply(arrayBinary);
-  }
-
-  /**
-   * TODO xzw
-   */
-  public Column sortedSample(Column column, DataType type, Object[] candidateBounds) {
-    if (type instanceof LongType) {
-      return applyUDF(() -> longToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "LONG_ORDERED_BYTES");
-    } else if (type instanceof DoubleType) {
-      return applyUDF(() -> doubleToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "DOUBLE_ORDERED_BYTES");
-    } else if (type instanceof FloatType) {
-      return applyUDF(() -> floatToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "FLOAT_ORDERED_BYTES");
-    } else if (type instanceof IntegerType) {
-      return applyUDF(() -> integerToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "INTEGER_ORDERED_BYTES");
-    } else if (type instanceof ShortType) {
-      return applyUDF(() -> shortToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "SHORT_ORDERED_BYTES");
-    } else if (type instanceof StringType) {
-      return applyUDF(() -> stringToBytesUDF(inputBuffer(inputCol, varTypeSize), candidateBounds), column,
-          "STRING_ORDERED_BYTES");
-    } else if (type instanceof DateType) {
-      return applyUDF(() -> dateToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "DATE_ORDERED_BYTES");
-    } else if (type instanceof TimestampType) {
-      return applyUDF(() -> timestampToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds),
-          column,"TIMESTAMP_ORDERED_BYTES");
-    } else if (type instanceof ByteType) {
-      return applyUDF(() -> byteToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,
-          "BYTE_ORDERED_BYTES");
-    } else if (type instanceof DecimalType) {
-      return applyUDF(() -> decimalToBytesUDF(inputBuffer(inputCol, PRIMITIVE_BUFFER_SIZE), candidateBounds), column,"DECIMAL_ORDERED_BYTES");
-    } else {
-      throw new IllegalArgumentException(
-          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
-    }
   }
 
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
@@ -339,5 +259,201 @@ class SparkZOrderUDF implements Serializable {
 
   private void increaseOutputSize(int bytes) {
     totalOutputBytes = Math.min(totalOutputBytes + bytes, maxOutputSize);
+  }
+
+  private void increase(int primitiveBufferSize) {
+    this.inputCol++;
+    increaseOutputSize(primitiveBufferSize);
+  }
+
+  Column interleaveBytes(Column arrayBinary) {
+    return interleaveUDF.apply(arrayBinary);
+  }
+
+  public Column sortedSample(Column column, DataType type, Object candidateBounds) {
+    if (type instanceof LongType) {
+      return longToBytesUDF(candidateBounds).withName("LONG_ORDERED_BYTES").apply(column);
+    } else if (type instanceof DoubleType) {
+      return doubleToBytesUDF(candidateBounds).withName("DOUBLE_ORDERED_BYTES").apply(column);
+    } else if (type instanceof FloatType) {
+      return floatToBytesUDF(candidateBounds).withName("FLOAT_ORDERED_BYTES").apply(column);
+    } else if (type instanceof IntegerType) {
+      return integerToBytesUDF(candidateBounds).withName("INTEGER_ORDERED_BYTES").apply(column);
+    } else if (type instanceof ShortType) {
+      return shortToBytesUDF(candidateBounds).withName("SHORT_ORDERED_BYTES").apply(column);
+    } else if (type instanceof StringType) {
+      return stringToBytesUDF(candidateBounds).withName("STRING_ORDERED_BYTES").apply(column);
+    } else if (type instanceof DateType) {
+      return dateToBytesUDF(candidateBounds).withName("DATE_ORDERED_BYTES").apply(column);
+    } else if (type instanceof TimestampType) {
+      return timestampToBytesUDF(candidateBounds).withName("TIMESTAMP_ORDERED_BYTES").apply(column);
+    } else if (type instanceof ByteType) {
+      return byteToBytesUDF(candidateBounds).withName("BYTE_ORDERED_BYTES").apply(column);
+    } else if (type instanceof DecimalType) {
+      return decimalToBytesUDF(candidateBounds).withName("DECIMAL_ORDERED_BYTES").apply(column);
+    } else {
+      throw new IllegalArgumentException(
+          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
+    }
+  }
+
+  UserDefinedFunction longToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Long value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound(value, (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction doubleToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Double value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound(Double.doubleToLongBits(value), (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction floatToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Float value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound(Double.doubleToLongBits(value), (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction integerToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Integer value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(getLongBound(value.longValue(), (long[]) candidateBounds), inputBuffer(
+          position,
+          PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction shortToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Short value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(getLongBound(value.longValue(), (long[]) candidateBounds), inputBuffer(
+          position,
+          PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction stringToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((String value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(getStringBound(value, (String[]) candidateBounds), inputBuffer(
+          position,
+          PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction dateToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Date value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound(value.getTime(), (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction timestampToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Timestamp value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound(value.getTime(), (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction byteToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((Byte value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(
+          getLongBound((long) value, (long[]) candidateBounds),
+          inputBuffer(position, PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
+  }
+
+  UserDefinedFunction decimalToBytesUDF(Object candidateBounds) {
+    int position = inputCol;
+    UserDefinedFunction udf = functions.udf((BigDecimal value) -> {
+      if (value == null) {
+        return PRIMITIVE_EMPTY;
+      }
+      return longToOrderedBytes(getLongBound(value.longValue(), (long[]) candidateBounds), inputBuffer(
+          position,
+          PRIMITIVE_BUFFER_SIZE))
+          .array();
+    }, DataTypes.BinaryType);
+
+    increase(PRIMITIVE_BUFFER_SIZE);
+    return udf;
   }
 }
