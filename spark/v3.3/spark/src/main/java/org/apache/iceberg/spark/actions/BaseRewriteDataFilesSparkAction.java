@@ -445,7 +445,7 @@ public class BaseRewriteDataFilesSparkAction
   }
 
   private SortStrategy zOrderStrategy(String... columnNames) {
-    return new SparkZOrderStrategy(table, spark(), Lists.newArrayList(columnNames));
+    return new SparkZOrderStrategyV2(table, spark(), Lists.newArrayList(columnNames));
   }
 
   @VisibleForTesting
