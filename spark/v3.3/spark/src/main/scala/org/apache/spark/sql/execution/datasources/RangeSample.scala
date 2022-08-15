@@ -29,6 +29,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.hashing.byteswap32
 
+
 class RangeSample[K: ClassTag](
                                 zorderPartitions: Int,
                                 rdd: RDD[Seq[K]],
@@ -51,9 +52,7 @@ class RangeSample[K: ClassTag](
       val sampleSize = math.min(samplePointsPerPartitionHint.toDouble * zorderPartitions, 1e6)
       // Assume the input partitions are roughly balanced and over-sample a little bit.
       val sampleSizePerPartition = math.ceil(3.0 * sampleSize / rdd.partitions.length).toInt
-      //      val sampleSizePerPartition = math.ceil(3.0 * sampleSize / rdd.partitions.length).toInt
       val (numItems, sketched) = sketch(rdd, sampleSizePerPartition)
-      //      val (numItems, sketched) = sketch(rdd.map(_._1), sampleSizePerPartition)
       if (numItems == 0L) {
         ArrayBuffer.empty[(Seq[K], Float)]
       } else {
@@ -100,7 +99,6 @@ class RangeSample[K: ClassTag](
                            rdd: RDD[K],
                            sampleSizePerPartition: Int): (Long, Array[(Int, Long, Array[K])]) = {
     val shift = rdd.id
-    // val classTagK = classTag[K] // to avoid serializing the entire partitioner object
     val sketched = rdd.mapPartitionsWithIndex { (idx, iter) =>
       val seed = byteswap32(idx ^ (shift << 16))
       val (sample, n) = SamplingUtils.reservoirSampleAndCount(
@@ -154,8 +152,7 @@ object RangeSampleSort {
 
     val zOrderIndexField = zOrderField.map { field =>
       field.dataType match {
-        // TODO 目前不支持BinaryType
-        case LongType | BooleanType | // BinaryType |
+        case LongType | BooleanType |
              DoubleType | FloatType | StringType | IntegerType | DateType | TimestampType | ShortType | ByteType =>
           (df.schema.fields.indexOf(field), field)
         case _: DecimalType =>
@@ -188,10 +185,6 @@ object RangeSampleSort {
             if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).toLong
           case decimalType: DecimalType =>
             if (row.isNullAt(index)) Long.MaxValue else row.getDecimal(index).longValue()
-          // case BinaryType =>
-          //   if (row.isNullAt(index)) Long.MaxValue else {
-          //     row.getAs[Array[Byte]](index).map(b => b.toLong).sum
-          //   }
           case _ =>
             null
         }
