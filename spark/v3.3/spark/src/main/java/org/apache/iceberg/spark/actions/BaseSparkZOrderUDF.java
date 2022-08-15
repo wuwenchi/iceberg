@@ -25,18 +25,27 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.hadoop.shaded.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 
+import static org.apache.iceberg.spark.actions.ZOrderOptions.DEFAULT_MAX_OUTPUT_SIZE;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.DEFAULT_VAR_LENGTH_CONTRIBUTION;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.MAX_OUTPUT_SIZE_KEY;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.VAR_LENGTH_CONTRIBUTION_KEY;
 import static org.apache.iceberg.util.ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
 
 abstract class BaseSparkZOrderUDF implements Serializable {
@@ -44,10 +53,13 @@ abstract class BaseSparkZOrderUDF implements Serializable {
   protected final int numCols;
   protected final Map<String, SparkZOrderUDFProvider> udfMap = Maps.newHashMap();
   private final int maxOutputSize;
+  protected int varLengthContribution;
   protected Set<String> supportedTypes;
   protected int inputCol = 0;
   protected int totalOutputBytes = 0;
   protected transient ThreadLocal<CharsetEncoder> encoder;
+  List<StructField> zOrderColumns;
+  private Map<String, String> options;
   /**
    * Every Spark task runs iteratively on a rows in a single thread so ThreadLocal should protect from
    * concurrent access to any of these structures.
@@ -59,15 +71,51 @@ abstract class BaseSparkZOrderUDF implements Serializable {
       .udf((Seq<byte[]> arrayBinary) -> interleaveBits(arrayBinary), DataTypes.BinaryType)
       .withName("INTERLEAVE_BYTES");
 
-  BaseSparkZOrderUDF(int numCols, int maxOutputSize) {
+  private SparkSession spark;
+
+  protected SparkSession spark() {
+    return spark;
+  }
+
+  BaseSparkZOrderUDF(int numCols, List<StructField> zOrderColumns, Map<String, String> options,SparkSession spark) {
+
+    maxOutputSize = PropertyUtil.propertyAsInt(options, MAX_OUTPUT_SIZE_KEY, DEFAULT_MAX_OUTPUT_SIZE);
+    Preconditions.checkArgument(maxOutputSize > 0,
+        "Cannot have the interleaved ZOrder value use less than 1 byte, %s was set to %s",
+        MAX_OUTPUT_SIZE_KEY, maxOutputSize);
+
+    varLengthContribution = PropertyUtil.propertyAsInt(options, VAR_LENGTH_CONTRIBUTION_KEY,
+        DEFAULT_VAR_LENGTH_CONTRIBUTION);
+    Preconditions.checkArgument(varLengthContribution > 0,
+        "Cannot use less than 1 byte for variable length types with zOrder, %s was set to %s",
+        VAR_LENGTH_CONTRIBUTION_KEY, varLengthContribution);
+
+    this.zOrderColumns = zOrderColumns;
     this.numCols = numCols;
-    this.maxOutputSize = maxOutputSize;
+    this.options = options;
+    this.spark=spark;
     init();
   }
+
+  protected Map<String, String> getOptions() {
+    return options;
+  }
+
+  ;
 
   protected boolean supportType(DataType type) {
     return supportedTypes.contains(type.typeName());
   }
+
+  protected Column toBytes(DataType type,Object obj,Column column) {
+    if (supportType(type)) {
+      return   udfMap.get(type.typeName()).getUDF(obj).apply(column);
+    } else {
+      throw new IllegalArgumentException(
+          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
+    }
+  }
+
 
   private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
     in.defaultReadObject();
@@ -100,16 +148,20 @@ abstract class BaseSparkZOrderUDF implements Serializable {
     increaseOutputSize(primitiveBufferSize);
   }
 
+  protected void registerUDFProvider(String typeName, SparkZOrderUDFProvider provider) {
+    if (!udfMap.containsKey(typeName)) {
+      udfMap.put(typeName, provider);
+    }
+  }
+
   Column interleaveBytes(Column arrayBinary) {
     return interleaveUDF.apply(arrayBinary);
   }
 
-  abstract Column applyToBytesUdf(Column column, DataType type, Object obj);
-  abstract void init();
 
-  Column sorted(Column column, DataType type, Object o) {
-    return applyToBytesUdf(column, type, o);
-  }
+  abstract void init();
+  abstract Column compute();
+
 
   interface SparkZOrderUDFProvider extends Serializable {
 

@@ -25,7 +25,7 @@ import java.util.Arrays;
 class SparkZOrderUDFUtils implements Serializable {
 
   /**
-   * 确定单条数据的边界下标索引
+   * Compute the bound subscripts
    */
   static int getLongBound(long key, long[] candidateBounds) {
     int bound = 0;

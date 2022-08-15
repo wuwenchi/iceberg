@@ -1057,7 +1057,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   @Test
-  public void testZOrderSort() {
+  public void testZOrderSortDirect() {
     int originalFiles = 20;
     Table table = createTable(originalFiles);
     shouldHaveLastCommitUnsorted(table, "c2");
@@ -1108,7 +1108,7 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
   }
 
   @Test
-  public void testZOderPartitions() {
+  public void testZOderSortRangePartition() {
     int partitions = 2;
     int originalFiles = 20;
 
@@ -1138,9 +1138,9 @@ public class TestRewriteDataFilesAction extends SparkTestBase {
         .option(SortStrategy.MAX_FILE_SIZE_BYTES, Integer.toString((averageFileSize(table) / 2) + 2))
         .option(RewriteDataFiles.TARGET_FILE_SIZE_BYTES, Integer.toString(averageFileSize(table) / 2))
         .option(SortStrategy.MIN_INPUT_FILES, "1")
-        .option(SparkZOrderStrategy.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
-        .option(SparkZOrderStrategy.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
-        .option(SparkZOrderStrategy.SAMPLE_POINTS_PER_PARTITION_HINT_KEY, "30")
+        .option(ZOrderOptions.SPATIAL_CURVE_STRATEGY_TYPE_KEY, "sample")
+        .option(ZOrderOptions.BUILD_RANGE_SAMPLE_SIZE_KEY, "6")
+        .option(ZOrderOptions.SAMPLE_POINTS_PER_PARTITION_HINT_KEY, "30")
         .execute();
 
     Assert.assertEquals("Should have 1 fileGroups", 1, result.rewriteResults().size());

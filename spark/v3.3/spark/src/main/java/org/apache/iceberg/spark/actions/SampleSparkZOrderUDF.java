@@ -22,40 +22,68 @@ package org.apache.iceberg.spark.actions;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
 import org.apache.hadoop.shaded.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.util.PropertyUtil;
+import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.Column;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.execution.datasources.RangeSampleSort$;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.DecimalType;
+import org.apache.spark.sql.types.StructField;
+import scala.collection.JavaConverters;
+import scala.reflect.ClassTag;
 
 import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.getLongBound;
 import static org.apache.iceberg.spark.actions.SparkZOrderUDFUtils.getStringBound;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.BUILD_RANGE_SAMPLE_SIZE_KEY;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.DEFAULT_BUILD_RANGE_SAMPLE_SIZE;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.DEFAULT_SAMPLE_POINTS_PER_PARTITION_HINT;
+import static org.apache.iceberg.spark.actions.ZOrderOptions.SAMPLE_POINTS_PER_PARTITION_HINT_KEY;
 import static org.apache.iceberg.util.ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
 import static org.apache.iceberg.util.ZOrderByteUtils.longToOrderedBytes;
 
 class SampleSparkZOrderUDF extends BaseSparkZOrderUDF {
+  private final DecimalToBytesZOrderUDFProvider decimalToBytesZOrderUDFProvider = new DecimalToBytesZOrderUDFProvider();
+  int samplePointsPerPartitionHint;
+  int buildRangeSampleSize;
+  private Dataset<Row> scanDF;
 
-  SampleSparkZOrderUDF(int numCols, int maxOutputSize) {
-    super(numCols, maxOutputSize);
-
+  SampleSparkZOrderUDF(
+      int numCols,
+      List<StructField> zOrderColumns, Dataset<Row> scanDF, Map<String, String> options, SparkSession spark) {
+    super(numCols, zOrderColumns, options, spark);
+    this.scanDF = scanDF;
   }
 
-  @Override
-  Column applyToBytesUdf(Column column, DataType type, Object candidateBounds) {
-    if (type instanceof DecimalType) {
-      return new DecimalToBytesZOrderUDFProvider().getUDF(candidateBounds).apply(column);
-    } else if (supportType(type)) {
-      return udfMap.get(type.typeName()).getUDF(candidateBounds).apply(column);
-    } else {
-      throw new IllegalArgumentException(
-          String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
-    }
-  }
 
   @Override
   void init() {
+
+    samplePointsPerPartitionHint = PropertyUtil.propertyAsInt(
+        getOptions(),
+        SAMPLE_POINTS_PER_PARTITION_HINT_KEY,
+        DEFAULT_SAMPLE_POINTS_PER_PARTITION_HINT);
+    Preconditions.checkArgument(samplePointsPerPartitionHint > 0,
+        "Cannot have ZOrder use a partition hint that is less than 1, %s was set to %s",
+        SAMPLE_POINTS_PER_PARTITION_HINT_KEY, samplePointsPerPartitionHint);
+
+    buildRangeSampleSize = PropertyUtil.propertyAsInt(
+        getOptions(),
+        BUILD_RANGE_SAMPLE_SIZE_KEY,
+        DEFAULT_BUILD_RANGE_SAMPLE_SIZE);
+    Preconditions.checkArgument(buildRangeSampleSize > 0,
+        "Cannot use less than 1 for range sample size with zOrder, %s was set to %s",
+        BUILD_RANGE_SAMPLE_SIZE_KEY, buildRangeSampleSize);
+
     udfMap.put(DataTypes.LongType.typeName(), new LongToBytesZOrderUDFProvider());
     udfMap.put(DataTypes.DoubleType.typeName(), new DoubleToBytesZOrderUDFProvider());
     udfMap.put(DataTypes.FloatType.typeName(), new FloatToBytesZOrderUDFProvider());
@@ -67,6 +95,31 @@ class SampleSparkZOrderUDF extends BaseSparkZOrderUDF {
     udfMap.put(DataTypes.ByteType.typeName(), new ByteToBytesZOrderUDFProvider());
     supportedTypes = ImmutableSet.<String>builder()
         .addAll(udfMap.keySet()).build();
+  }
+
+  @Override
+  Column compute() {
+    Object[] rangeBound = RangeSampleSort$.MODULE$.getRangeBound(
+        scanDF,
+        JavaConverters.asScalaBuffer(zOrderColumns),
+        buildRangeSampleSize,
+        samplePointsPerPartitionHint);
+
+    Broadcast<Object[]> broadcast = spark().sparkContext().broadcast(rangeBound, ClassTag.apply(Object[].class));
+
+    Column[] columns = new Column[zOrderColumns.size()];
+    for (int i = 0; i < zOrderColumns.size(); i++) {
+      StructField colStruct = zOrderColumns.get(i);
+
+      Column column = functions.col(colStruct.name());
+      DataType type = colStruct.dataType();
+      if (type instanceof DecimalType) {
+        columns[i] = decimalToBytesZOrderUDFProvider.getUDF(broadcast.value()[i]).apply(column);
+      } else {
+        columns[i] = toBytes(type, broadcast.value()[i], column);
+      }
+    }
+    return functions.array(columns);
   }
 
   private byte[] boundToBytes(int bound, int position) {

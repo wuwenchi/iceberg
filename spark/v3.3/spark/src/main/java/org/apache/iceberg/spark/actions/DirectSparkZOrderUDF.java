@@ -20,37 +20,37 @@
 package org.apache.iceberg.spark.actions;
 
 import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Map;
 import org.apache.hadoop.shaded.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.util.ZOrderByteUtils;
 import org.apache.spark.sql.Column;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.DateType;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.TimestampType;
 
 import static org.apache.iceberg.util.ZOrderByteUtils.PRIMITIVE_BUFFER_SIZE;
 
 class DirectSparkZOrderUDF extends BaseSparkZOrderUDF {
 
-  private final int varTypeSize;
-
-  DirectSparkZOrderUDF(int numCols, int varTypeSize, int maxOutputSize) {
-    super(numCols, maxOutputSize);
-    this.varTypeSize = varTypeSize;
+  DirectSparkZOrderUDF(int numCols, List<StructField> zOrderColumns, Map<String, String> options, SparkSession spark) {
+    super(numCols, zOrderColumns, options, spark);
   }
 
-  @Override
-  Column applyToBytesUdf(Column column, DataType type, Object obj) {
-    if (type instanceof TimestampType) {
-      return udfMap.get(DataTypes.LongType.typeName()).getUDF(obj).apply(column.cast(DataTypes.LongType));
+  Column toBytes(Column column, DataType type) {
+    if (type instanceof TimestampType || type instanceof DateType) {
+      return udfMap.get(DataTypes.LongType.typeName()).getUDF(null).apply(column.cast(DataTypes.LongType));
     } else if (supportType(type)) {
-      udfMap.get(type.typeName()).getUDF(obj).apply(column);
+      return udfMap.get(type.typeName()).getUDF(null).apply(column);
     } else {
       throw new IllegalArgumentException(
           String.format("Cannot use column %s of type %s in ZOrdering, the type is unsupported", column, type));
     }
-    return null;
   }
 
   @Override
@@ -58,13 +58,28 @@ class DirectSparkZOrderUDF extends BaseSparkZOrderUDF {
     udfMap.put(DataTypes.ByteType.typeName(), new TinyToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.ShortType.typeName(), new ShortToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.IntegerType.typeName(), new IntToOrderedBytesZOrderUDFProvider());
-    udfMap.put(DataTypes.LongType.typeName(), new IntToOrderedBytesZOrderUDFProvider());
+    udfMap.put(DataTypes.LongType.typeName(), new LongToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.FloatType.typeName(), new FloatToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.DoubleType.typeName(), new DoubleToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.StringType.typeName(), new StringToOrderedBytesZOrderUDFProvider());
     udfMap.put(DataTypes.BinaryType.typeName(), new BytesTruncateZOrderUDFProvider());
     udfMap.put(DataTypes.BooleanType.typeName(), new BooleanToOrderedBytesZOrderUDFProvider());
     supportedTypes = ImmutableSet.<String>builder().addAll(udfMap.keySet()).build();
+  }
+
+  @Override
+  Column compute() {
+    return functions.array(zOrderColumns.stream()
+        .map(colStruct -> {
+          DataType type = colStruct.dataType();
+          Column column = functions.col(colStruct.name());
+          if (type instanceof TimestampType || type instanceof DateType) {
+            return udfMap.get(DataTypes.LongType.typeName()).getUDF(null).apply(column.cast(DataTypes.LongType));
+          }
+          return toBytes(type, null, column);
+        })
+        // .map(colStruct -> toBytes(functions.col(colStruct.name()), colStruct.dataType()))
+        .toArray(Column[]::new));
   }
 
   class TinyToOrderedBytesZOrderUDFProvider implements SparkZOrderUDFProvider {
@@ -205,11 +220,11 @@ class DirectSparkZOrderUDF extends BaseSparkZOrderUDF {
       UserDefinedFunction udf = functions
           .udf(
               (String value) -> ZOrderByteUtils.stringToOrderedBytes(value,
-                  varTypeSize, inputBuffer(position, varTypeSize), encoder.get()).array(),
+                  varLengthContribution, inputBuffer(position, varLengthContribution), encoder.get()).array(),
               DataTypes.BinaryType)
           .withName("STRING-LEXICAL-BYTES");
 
-      increase(varTypeSize);
+      increase(varLengthContribution);
       return udf;
     }
   }
@@ -222,11 +237,11 @@ class DirectSparkZOrderUDF extends BaseSparkZOrderUDF {
       UserDefinedFunction udf = functions
           .udf(
               (byte[] value) -> ZOrderByteUtils.byteTruncateOrFill(value,
-                  varTypeSize, inputBuffer(position, varTypeSize)).array(),
+                  varLengthContribution, inputBuffer(position, varLengthContribution)).array(),
               DataTypes.BinaryType)
           .withName("BYTE-TRUNCATE");
 
-      increase(varTypeSize);
+      increase(varLengthContribution);
       return udf;
     }
   }
