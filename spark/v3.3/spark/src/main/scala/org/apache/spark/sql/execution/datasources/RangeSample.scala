@@ -168,11 +168,11 @@ object RangeSampleSort {
           case LongType =>
             if (row.isNullAt(index)) Long.MaxValue else row.getLong(index)
           case DoubleType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getDouble(index).toLong
+            if (row.isNullAt(index)) Double.MaxValue else row.getDouble(index).toLong
           case IntegerType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getInt(index).toLong
+            if (row.isNullAt(index)) Int.MaxValue else row.getInt(index).toLong
           case FloatType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getFloat(index).toLong
+            if (row.isNullAt(index)) Float.MaxValue else row.getFloat(index).toLong
           case StringType =>
             if (row.isNullAt(index)) "" else row.getString(index)
           case DateType =>
@@ -180,11 +180,11 @@ object RangeSampleSort {
           case TimestampType =>
             if (row.isNullAt(index)) Long.MaxValue else row.getTimestamp(index).getTime
           case ByteType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getByte(index).toLong
+            if (row.isNullAt(index)) Byte.MaxValue else row.getByte(index).toLong
           case ShortType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getShort(index).toLong
+            if (row.isNullAt(index)) Short.MaxValue else row.getShort(index).toLong
           case decimalType: DecimalType =>
-            if (row.isNullAt(index)) Long.MaxValue else row.getDecimal(index).longValue()
+            if (row.isNullAt(index)) Decimal.ONE else row.getDecimal(index).longValue()
           case _ =>
             null
         }
