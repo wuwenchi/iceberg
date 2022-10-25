@@ -28,6 +28,7 @@ import org.apache.flink.api.common.io.statistics.BaseStatistics;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.io.InputSplitAssigner;
 import org.apache.flink.table.data.RowData;
+import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.encryption.EncryptionManager;
@@ -42,12 +43,10 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
   private static final long serialVersionUID = 1L;
 
   private final TableLoader tableLoader;
-  private final FileIO io;
-  private final EncryptionManager encryption;
   private final ScanContext context;
   private final RowDataFileScanTaskReader rowDataReader;
 
-  private transient DataIterator<RowData> iterator;
+  private transient DataIterator<RowData, FileScanTask> iterator;
   private transient long currentReadCount = 0L;
 
   FlinkInputFormat(
@@ -57,12 +56,15 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
       EncryptionManager encryption,
       ScanContext context) {
     this.tableLoader = tableLoader;
-    this.io = io;
-    this.encryption = encryption;
     this.context = context;
     this.rowDataReader =
         new RowDataFileScanTaskReader(
-            tableSchema, context.project(), context.nameMapping(), context.caseSensitive());
+            tableSchema,
+            context.project(),
+            context.caseSensitive(),
+            context.nameMapping(),
+            io,
+            encryption);
   }
 
   @VisibleForTesting
@@ -102,7 +104,7 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
 
   @Override
   public void open(FlinkInputSplit split) {
-    this.iterator = new DataIterator<>(rowDataReader, split.getTask(), io, encryption);
+    this.iterator = new DataIterator<>(rowDataReader, split.getTask());
   }
 
   @Override

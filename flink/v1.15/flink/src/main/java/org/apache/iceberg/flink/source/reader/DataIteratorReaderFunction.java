@@ -19,24 +19,27 @@
 package org.apache.iceberg.flink.source.reader;
 
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.flink.source.DataIterator;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.CloseableIterator;
 
 /** A {@link ReaderFunction} implementation that uses {@link DataIterator}. */
-public abstract class DataIteratorReaderFunction<T> implements ReaderFunction<T> {
-  private final DataIteratorBatcher<T> batcher;
+public abstract class DataIteratorReaderFunction<T, S extends ScanTask, G extends ScanTaskGroup<S>>
+    implements ReaderFunction<T, S, G> {
+  private final DataIteratorBatcher<T, S> batcher;
 
-  public DataIteratorReaderFunction(DataIteratorBatcher<T> batcher) {
+  public DataIteratorReaderFunction(DataIteratorBatcher<T, S> batcher) {
     this.batcher = batcher;
   }
 
-  protected abstract DataIterator<T> createDataIterator(IcebergSourceSplit split);
+  protected abstract DataIterator<T, S> createDataIterator(IcebergSourceSplit<S, G> split);
 
   @Override
   public CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> apply(
-      IcebergSourceSplit split) {
-    DataIterator<T> inputIterator = createDataIterator(split);
+      IcebergSourceSplit<S, G> split) {
+    DataIterator<T, S> inputIterator = createDataIterator(split);
     inputIterator.seek(split.fileOffset(), split.recordOffset());
     return batcher.batch(split.splitId(), inputIterator);
   }

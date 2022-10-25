@@ -23,10 +23,13 @@ import java.util.List;
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericAppenderFactory;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.flink.TestFixtures;
+import org.apache.iceberg.flink.source.split.IcebergSourceCombinedSplit;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -51,7 +54,9 @@ public abstract class ReaderFunctionTestBase<T> {
 
   @ClassRule public static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
 
-  protected abstract ReaderFunction<T> readerFunction();
+  protected abstract ReaderFunction<
+          T, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+      readerFunction();
 
   protected abstract void assertRecords(List<Record> expected, List<T> actual, Schema schema);
 
@@ -92,7 +97,7 @@ public abstract class ReaderFunctionTestBase<T> {
     CombinedScanTask combinedScanTask =
         ReaderUtil.createCombinedScanTask(
             recordBatchList, TEMPORARY_FOLDER, fileFormat, appenderFactory);
-    IcebergSourceSplit split = IcebergSourceSplit.fromCombinedScanTask(combinedScanTask);
+    IcebergSourceSplit split = IcebergSourceCombinedSplit.fromCombinedScanTask(combinedScanTask);
     CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> reader =
         readerFunction().apply(split);
 

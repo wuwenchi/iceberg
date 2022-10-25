@@ -16,22 +16,26 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.flink.source.reader;
+package org.apache.iceberg.flink.source;
 
 import java.io.Serializable;
-import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
-import org.apache.flink.connector.base.source.reader.splitreader.SplitReader;
+import org.apache.flink.annotation.Internal;
 import org.apache.iceberg.ScanTask;
-import org.apache.iceberg.flink.source.DataIterator;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.io.CloseableIterator;
 
 /**
- * Batcher converts iterator of T into iterator of batched {@code
- * RecordsWithSplitIds<RecordAndPosition<T>>}, as FLIP-27's {@link SplitReader#fetch()} returns
- * batched records.
+ * Read a {@link ScanTask} into a {@link CloseableIterator}
+ *
+ * @param <T> is the output data type returned by this iterator.
+ * @param <S> is the file scan task.
  */
-@FunctionalInterface
-public interface DataIteratorBatcher<T, S extends ScanTask> extends Serializable {
-  CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> batch(
-      String splitId, DataIterator<T, S> inputIterator);
+@Internal
+public interface ScanTaskReader<T, S extends ScanTask> extends Serializable {
+
+  CloseableIterator<T> open(S scanTask);
+
+  ScanTaskGroup<S> taskGroup();
+
+  void taskGroup(ScanTaskGroup<S> taskGroup);
 }

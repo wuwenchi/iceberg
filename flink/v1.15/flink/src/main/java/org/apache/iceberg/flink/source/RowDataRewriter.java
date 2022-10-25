@@ -31,6 +31,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.Table;
@@ -119,7 +120,8 @@ public class RowDataRewriter {
       this.encryptionManager = encryptionManager;
       this.taskWriterFactory = taskWriterFactory;
       this.rowDataReader =
-          new RowDataFileScanTaskReader(schema, schema, nameMapping, caseSensitive);
+          new RowDataFileScanTaskReader(
+              schema, schema, caseSensitive, nameMapping, io, encryptionManager);
     }
 
     @Override
@@ -134,8 +136,7 @@ public class RowDataRewriter {
     public List<DataFile> map(CombinedScanTask task) throws Exception {
       // Initialize the task writer.
       this.writer = taskWriterFactory.create();
-      try (DataIterator<RowData> iterator =
-          new DataIterator<>(rowDataReader, task, io, encryptionManager)) {
+      try (DataIterator<RowData, FileScanTask> iterator = new DataIterator<>(rowDataReader, task)) {
         while (iterator.hasNext()) {
           RowData rowData = iterator.next();
           writer.write(rowData);

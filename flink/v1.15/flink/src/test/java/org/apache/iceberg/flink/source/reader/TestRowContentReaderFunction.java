@@ -28,6 +28,8 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.types.Row;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.encryption.PlaintextEncryptionManager;
@@ -36,19 +38,20 @@ import org.apache.iceberg.flink.TestFixtures;
 import org.apache.iceberg.flink.TestHelpers;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 
-public class TestRowDataReaderFunction extends ReaderFunctionTestBase<RowData> {
+public class TestRowContentReaderFunction extends ReaderFunctionTestBase<RowData> {
 
   protected static final RowType rowType = FlinkSchemaUtil.convert(TestFixtures.SCHEMA);
   private static final DataStructureConverter<Object, Object> rowDataConverter =
       DataStructureConverters.getConverter(TypeConversions.fromLogicalToDataType(rowType));
 
-  public TestRowDataReaderFunction(FileFormat fileFormat) {
+  public TestRowContentReaderFunction(FileFormat fileFormat) {
     super(fileFormat);
   }
 
   @Override
-  protected ReaderFunction<RowData> readerFunction() {
-    return new RowDataReaderFunction(
+  protected ReaderFunction<RowData, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+      readerFunction() {
+    return new RowContentReaderFunction(
         new Configuration(),
         TestFixtures.SCHEMA,
         TestFixtures.SCHEMA,

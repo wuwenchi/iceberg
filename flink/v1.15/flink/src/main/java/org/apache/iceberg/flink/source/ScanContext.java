@@ -74,6 +74,9 @@ public class ScanContext implements Serializable {
   private static final ConfigOption<Boolean> STREAMING =
       ConfigOptions.key("streaming").booleanType().defaultValue(false);
 
+  private static final ConfigOption<String> SCAN_MODE =
+      ConfigOptions.key("scan-mode").stringType().noDefaultValue();
+
   private static final ConfigOption<Duration> MONITOR_INTERVAL =
       ConfigOptions.key("monitor-interval").durationType().defaultValue(Duration.ofSeconds(10));
 
@@ -104,6 +107,7 @@ public class ScanContext implements Serializable {
   private final boolean includeColumnStats;
   private final Integer planParallelism;
   private final int maxPlanningSnapshotCount;
+  private final String scanMode;
 
   private ScanContext(
       boolean caseSensitive,
@@ -125,7 +129,8 @@ public class ScanContext implements Serializable {
       boolean includeColumnStats,
       boolean exposeLocality,
       Integer planParallelism,
-      int maxPlanningSnapshotCount) {
+      int maxPlanningSnapshotCount,
+      String scanMode) {
     this.caseSensitive = caseSensitive;
     this.snapshotId = snapshotId;
     this.startingStrategy = startingStrategy;
@@ -147,6 +152,7 @@ public class ScanContext implements Serializable {
     this.exposeLocality = exposeLocality;
     this.planParallelism = planParallelism;
     this.maxPlanningSnapshotCount = maxPlanningSnapshotCount;
+    this.scanMode = scanMode;
 
     validate();
   }
@@ -236,6 +242,10 @@ public class ScanContext implements Serializable {
     return limit;
   }
 
+  public String scanMode() {
+    return scanMode;
+  }
+
   public boolean includeColumnStats() {
     return includeColumnStats;
   }
@@ -268,6 +278,7 @@ public class ScanContext implements Serializable {
         .project(schema)
         .filters(filters)
         .limit(limit)
+        .scanMode(scanMode)
         .includeColumnStats(includeColumnStats)
         .exposeLocality(exposeLocality)
         .planParallelism(planParallelism)
@@ -291,6 +302,7 @@ public class ScanContext implements Serializable {
         .project(schema)
         .filters(filters)
         .limit(limit)
+        .scanMode(scanMode)
         .includeColumnStats(includeColumnStats)
         .exposeLocality(exposeLocality)
         .planParallelism(planParallelism)
@@ -319,6 +331,7 @@ public class ScanContext implements Serializable {
     private Schema projectedSchema;
     private List<Expression> filters;
     private long limit = -1L;
+    private String scanMode = SCAN_MODE.defaultValue();
     private boolean includeColumnStats = INCLUDE_COLUMN_STATS.defaultValue();
     private boolean exposeLocality;
     private Integer planParallelism =
@@ -407,6 +420,11 @@ public class ScanContext implements Serializable {
       return this;
     }
 
+    public Builder scanMode(String newScanMode) {
+      this.scanMode = newScanMode;
+      return this;
+    }
+
     public Builder includeColumnStats(boolean newIncludeColumnStats) {
       this.includeColumnStats = newIncludeColumnStats;
       return this;
@@ -445,7 +463,8 @@ public class ScanContext implements Serializable {
           .monitorInterval(config.get(MONITOR_INTERVAL))
           .nameMapping(properties.get(DEFAULT_NAME_MAPPING))
           .includeColumnStats(config.get(INCLUDE_COLUMN_STATS))
-          .maxPlanningSnapshotCount(config.get(MAX_PLANNING_SNAPSHOT_COUNT));
+          .maxPlanningSnapshotCount(config.get(MAX_PLANNING_SNAPSHOT_COUNT))
+          .scanMode(config.get(SCAN_MODE));
     }
 
     public ScanContext build() {
@@ -469,7 +488,8 @@ public class ScanContext implements Serializable {
           includeColumnStats,
           exposeLocality,
           planParallelism,
-          maxPlanningSnapshotCount);
+          maxPlanningSnapshotCount,
+          scanMode);
     }
   }
 }

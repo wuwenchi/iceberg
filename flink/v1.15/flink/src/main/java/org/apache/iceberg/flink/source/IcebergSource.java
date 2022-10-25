@@ -39,6 +39,11 @@ import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.util.Preconditions;
+import org.apache.iceberg.ChangelogScanTask;
+import org.apache.iceberg.CombinedScanTask;
+import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.expressions.Expression;
@@ -55,7 +60,8 @@ import org.apache.iceberg.flink.source.enumerator.StaticIcebergEnumerator;
 import org.apache.iceberg.flink.source.reader.IcebergSourceReader;
 import org.apache.iceberg.flink.source.reader.IcebergSourceReaderMetrics;
 import org.apache.iceberg.flink.source.reader.ReaderFunction;
-import org.apache.iceberg.flink.source.reader.RowDataReaderFunction;
+import org.apache.iceberg.flink.source.reader.RowChangeLogReaderFunction;
+import org.apache.iceberg.flink.source.reader.RowContentReaderFunction;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplitSerializer;
 import org.apache.iceberg.util.ThreadPools;
@@ -68,7 +74,8 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
 
   private final TableLoader tableLoader;
   private final ScanContext scanContext;
-  private final ReaderFunction<T> readerFunction;
+  private final ReaderFunction<T, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+      readerFunction;
   private final SplitAssignerFactory assignerFactory;
 
   // Can't use SerializableTable as enumerator needs a regular table
@@ -78,7 +85,8 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
   IcebergSource(
       TableLoader tableLoader,
       ScanContext scanContext,
-      ReaderFunction<T> readerFunction,
+      ReaderFunction<T, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+          readerFunction,
       SplitAssignerFactory assignerFactory,
       Table table) {
     this.tableLoader = tableLoader;
@@ -205,7 +213,8 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
     // required
     private TableLoader tableLoader;
     private SplitAssignerFactory splitAssignerFactory;
-    private ReaderFunction<T> readerFunction;
+    private ReaderFunction<T, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+        readerFunction;
     private ReadableConfig flinkConfig = new Configuration();
 
     // optional
@@ -225,7 +234,9 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
       return this;
     }
 
-    public Builder<T> readerFunction(ReaderFunction<T> newReaderFunction) {
+    public Builder<T> readerFunction(
+        ReaderFunction<T, ? extends ScanTask, ? extends ScanTaskGroup<? extends ScanTask>>
+            newReaderFunction) {
       this.readerFunction = newReaderFunction;
       return this;
     }
@@ -295,6 +306,11 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
       return this;
     }
 
+    public Builder<T> scanMode(String newScanMode) {
+      this.contextBuilder.scanMode(newScanMode);
+      return this;
+    }
+
     public Builder<T> nameMapping(String newNameMapping) {
       this.contextBuilder.nameMapping(newNameMapping);
       return this;
@@ -340,6 +356,7 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
       return this;
     }
 
+    @SuppressWarnings("unchecked")
     public IcebergSource<T> build() {
       Table table;
       try (TableLoader loader = tableLoader) {
@@ -356,22 +373,41 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
 
       ScanContext context = contextBuilder.build();
       if (readerFunction == null) {
-        RowDataReaderFunction rowDataReaderFunction =
-            new RowDataReaderFunction(
-                flinkConfig,
-                table.schema(),
-                context.project(),
-                context.nameMapping(),
-                context.caseSensitive(),
-                table.io(),
-                table.encryption());
-        this.readerFunction = (ReaderFunction<T>) rowDataReaderFunction;
+
+        ScanMode scanMode = ScanMode.checkScanMode(context);
+
+        if (scanMode == ScanMode.CHANGELOG_SCAN) {
+          RowChangeLogReaderFunction rowChangeLogReaderFunction =
+              new RowChangeLogReaderFunction(
+                  flinkConfig,
+                  table.schema(),
+                  context.project(),
+                  context.nameMapping(),
+                  context.caseSensitive(),
+                  table.io(),
+                  table.encryption());
+          this.readerFunction =
+              (ReaderFunction<T, ChangelogScanTask, ScanTaskGroup<ChangelogScanTask>>)
+                  rowChangeLogReaderFunction;
+        } else {
+
+          RowContentReaderFunction rowContentReaderFunction =
+              new RowContentReaderFunction(
+                  flinkConfig,
+                  table.schema(),
+                  context.project(),
+                  context.nameMapping(),
+                  context.caseSensitive(),
+                  table.io(),
+                  table.encryption());
+          this.readerFunction =
+              (ReaderFunction<T, FileScanTask, CombinedScanTask>) rowContentReaderFunction;
+        }
       }
 
       checkRequired();
       // Since builder already load the table, pass it to the source to avoid double loading
-      return new IcebergSource<T>(
-          tableLoader, context, readerFunction, splitAssignerFactory, table);
+      return new IcebergSource<>(tableLoader, context, readerFunction, splitAssignerFactory, table);
     }
 
     private void checkRequired() {

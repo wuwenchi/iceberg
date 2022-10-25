@@ -16,22 +16,27 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.flink.source.reader;
+package org.apache.iceberg.flink.source.split;
 
-import java.io.Serializable;
-import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
-import org.apache.flink.connector.base.source.reader.splitreader.SplitReader;
-import org.apache.iceberg.ScanTask;
-import org.apache.iceberg.flink.source.DataIterator;
-import org.apache.iceberg.io.CloseableIterator;
+import java.util.Collection;
+import org.apache.iceberg.ChangelogScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 
-/**
- * Batcher converts iterator of T into iterator of batched {@code
- * RecordsWithSplitIds<RecordAndPosition<T>>}, as FLIP-27's {@link SplitReader#fetch()} returns
- * batched records.
- */
-@FunctionalInterface
-public interface DataIteratorBatcher<T, S extends ScanTask> extends Serializable {
-  CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> batch(
-      String splitId, DataIterator<T, S> inputIterator);
+public class IcebergSourceChangeLogSplit
+    extends IcebergSourceSplit<ChangelogScanTask, ScanTaskGroup<ChangelogScanTask>> {
+
+  protected IcebergSourceChangeLogSplit(
+      ScanTaskGroup<ChangelogScanTask> task, int fileOffset, long recordOffset) {
+    super(task, fileOffset, recordOffset);
+  }
+
+  @Override
+  public String splitId() {
+    return task().toString();
+  }
+
+  @Override
+  protected String toString(Collection<ChangelogScanTask> files) {
+    return files.toString();
+  }
 }

@@ -98,8 +98,8 @@ public class TestIcebergSourceReader {
       MetricGroup metricGroup, SourceReaderContext readerContext) {
     IcebergSourceReaderMetrics readerMetrics =
         new IcebergSourceReaderMetrics(metricGroup, "db.tbl");
-    RowDataReaderFunction readerFunction =
-        new RowDataReaderFunction(
+    RowContentReaderFunction readerFunction =
+        new RowContentReaderFunction(
             new Configuration(),
             TestFixtures.SCHEMA,
             TestFixtures.SCHEMA,
