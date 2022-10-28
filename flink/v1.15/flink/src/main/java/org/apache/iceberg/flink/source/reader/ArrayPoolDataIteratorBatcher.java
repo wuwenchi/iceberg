@@ -26,7 +26,7 @@ import org.apache.flink.connector.base.source.reader.SourceReaderOptions;
 import org.apache.flink.connector.file.src.util.Pool;
 import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.flink.FlinkConfigOptions;
-import org.apache.iceberg.flink.source.DataIterator;
+import org.apache.iceberg.flink.source.BaseScanTaskReader;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
@@ -46,7 +46,7 @@ class ArrayPoolDataIteratorBatcher<T, S extends ScanTask> implements DataIterato
 
   @Override
   public CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> batch(
-      String splitId, DataIterator<T, S> inputIterator) {
+      String splitId, BaseScanTaskReader<T, S> inputIterator) {
     Preconditions.checkArgument(inputIterator != null, "Input data iterator can't be null");
     // lazily create pool as it is not serializable
     if (pool == null) {
@@ -69,10 +69,10 @@ class ArrayPoolDataIteratorBatcher<T, S extends ScanTask> implements DataIterato
       implements CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> {
 
     private final String splitId;
-    private final DataIterator<T, S> inputIterator;
+    private final BaseScanTaskReader<T, S> inputIterator;
     private final Pool<T[]> pool;
 
-    ArrayPoolBatchIterator(String splitId, DataIterator<T, S> inputIterator, Pool<T[]> pool) {
+    ArrayPoolBatchIterator(String splitId, BaseScanTaskReader<T, S> inputIterator, Pool<T[]> pool) {
       this.splitId = splitId;
       this.inputIterator = inputIterator;
       this.pool = pool;

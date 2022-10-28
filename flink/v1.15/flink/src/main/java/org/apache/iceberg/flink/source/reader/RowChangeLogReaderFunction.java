@@ -25,7 +25,6 @@ import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
-import org.apache.iceberg.flink.source.DataIterator;
 import org.apache.iceberg.flink.source.RowDataFileChangeLogReader;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.FileIO;
@@ -63,11 +62,10 @@ public class RowChangeLogReaderFunction
   }
 
   @Override
-  public DataIterator<RowData, ChangelogScanTask> createDataIterator(
+  public RowDataFileChangeLogReader createDataIterator(
       IcebergSourceSplit<ChangelogScanTask, ScanTaskGroup<ChangelogScanTask>> split) {
-    return new DataIterator<>(
-        new RowDataFileChangeLogReader(
-            tableSchema, readSchema, caseSensitive, nameMapping, split.task(), io, encryption));
+    return new RowDataFileChangeLogReader(
+        tableSchema, readSchema, caseSensitive, nameMapping, split.task(), io, encryption);
   }
 
   private static Schema readSchema(Schema tableSchema, Schema projectedSchema) {

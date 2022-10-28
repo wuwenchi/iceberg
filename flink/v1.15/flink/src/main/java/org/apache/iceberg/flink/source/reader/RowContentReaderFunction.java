@@ -25,7 +25,6 @@ import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
-import org.apache.iceberg.flink.source.DataIterator;
 import org.apache.iceberg.flink.source.RowDataFileScanTaskReader;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.FileIO;
@@ -62,11 +61,10 @@ public class RowContentReaderFunction
   }
 
   @Override
-  public DataIterator<RowData, FileScanTask> createDataIterator(
+  public RowDataFileScanTaskReader createDataIterator(
       IcebergSourceSplit<FileScanTask, CombinedScanTask> split) {
-    return new DataIterator<>(
-        new RowDataFileScanTaskReader(
-            tableSchema, readSchema, nameMapping, caseSensitive, split.task(), io, encryption));
+    return new RowDataFileScanTaskReader(
+        tableSchema, readSchema, caseSensitive, nameMapping, split.task(), io, encryption);
   }
 
   private static Schema readSchema(Schema tableSchema, Schema projectedSchema) {

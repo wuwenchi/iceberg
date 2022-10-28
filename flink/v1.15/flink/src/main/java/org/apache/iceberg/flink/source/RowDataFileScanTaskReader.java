@@ -50,17 +50,6 @@ public class RowDataFileScanTaskReader extends BaseScanTaskReader<RowData, FileS
       Schema projectedSchema,
       boolean caseSensitive,
       String nameMapping,
-      FileIO io,
-      EncryptionManager encryption) {
-    super(projectedSchema, caseSensitive, nameMapping, null, io, encryption);
-    this.tableSchema = tableSchema;
-  }
-
-  public RowDataFileScanTaskReader(
-      Schema tableSchema,
-      Schema projectedSchema,
-      String nameMapping,
-      boolean caseSensitive,
       ScanTaskGroup<FileScanTask> taskGroup,
       FileIO io,
       EncryptionManager encryption) {

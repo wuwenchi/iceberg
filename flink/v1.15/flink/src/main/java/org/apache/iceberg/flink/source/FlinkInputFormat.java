@@ -28,7 +28,6 @@ import org.apache.flink.api.common.io.statistics.BaseStatistics;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.io.InputSplitAssigner;
 import org.apache.flink.table.data.RowData;
-import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.encryption.EncryptionManager;
@@ -44,9 +43,12 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
 
   private final TableLoader tableLoader;
   private final ScanContext context;
-  private final RowDataFileScanTaskReader rowDataReader;
+  private final Schema tableSchema;
+  private final FileIO io;
+  private final EncryptionManager encryption;
 
-  private transient DataIterator<RowData, FileScanTask> iterator;
+  private transient RowDataFileScanTaskReader rowDataReader;
+
   private transient long currentReadCount = 0L;
 
   FlinkInputFormat(
@@ -57,14 +59,9 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
       ScanContext context) {
     this.tableLoader = tableLoader;
     this.context = context;
-    this.rowDataReader =
-        new RowDataFileScanTaskReader(
-            tableSchema,
-            context.project(),
-            context.caseSensitive(),
-            context.nameMapping(),
-            io,
-            encryption);
+    this.tableSchema = tableSchema;
+    this.io = io;
+    this.encryption = encryption;
   }
 
   @VisibleForTesting
@@ -104,7 +101,15 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
 
   @Override
   public void open(FlinkInputSplit split) {
-    this.iterator = new DataIterator<>(rowDataReader, split.getTask());
+    this.rowDataReader =
+        new RowDataFileScanTaskReader(
+            tableSchema,
+            context.project(),
+            context.caseSensitive(),
+            context.nameMapping(),
+            split.getTask(),
+            io,
+            encryption);
   }
 
   @Override
@@ -112,20 +117,20 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
     if (context.limit() > 0 && currentReadCount >= context.limit()) {
       return true;
     } else {
-      return !iterator.hasNext();
+      return !rowDataReader.hasNext();
     }
   }
 
   @Override
   public RowData nextRecord(RowData reuse) {
     currentReadCount++;
-    return iterator.next();
+    return rowDataReader.next();
   }
 
   @Override
   public void close() throws IOException {
-    if (iterator != null) {
-      iterator.close();
+    if (rowDataReader != null) {
+      rowDataReader.close();
     }
   }
 }

@@ -22,7 +22,7 @@ import java.io.Serializable;
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitReader;
 import org.apache.iceberg.ScanTask;
-import org.apache.iceberg.flink.source.DataIterator;
+import org.apache.iceberg.flink.source.BaseScanTaskReader;
 import org.apache.iceberg.io.CloseableIterator;
 
 /**
@@ -33,5 +33,5 @@ import org.apache.iceberg.io.CloseableIterator;
 @FunctionalInterface
 public interface DataIteratorBatcher<T, S extends ScanTask> extends Serializable {
   CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> batch(
-      String splitId, DataIterator<T, S> inputIterator);
+      String splitId, BaseScanTaskReader<T, S> inputIterator);
 }
