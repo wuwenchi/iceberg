@@ -21,11 +21,14 @@ package org.apache.iceberg.flink.source.reader;
 import java.io.Serializable;
 import java.util.function.Function;
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.CloseableIterator;
 
 @FunctionalInterface
-public interface ReaderFunction<T>
+public interface ReaderFunction<T, S extends ScanTask, G extends ScanTaskGroup<S>>
     extends Serializable,
         Function<
-            IcebergSourceSplit, CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>>> {}
+            IcebergSourceSplit<S, G>,
+            CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>>> {}

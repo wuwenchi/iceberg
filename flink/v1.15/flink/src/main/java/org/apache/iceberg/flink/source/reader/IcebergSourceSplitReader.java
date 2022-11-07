@@ -29,27 +29,29 @@ import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitReader;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitsAddition;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitsChange;
-import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.ScanTask;
+import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.io.CloseableIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class IcebergSourceSplitReader<T> implements SplitReader<RecordAndPosition<T>, IcebergSourceSplit> {
+class IcebergSourceSplitReader<T, S extends ScanTask, G extends ScanTaskGroup<S>>
+    implements SplitReader<RecordAndPosition<T>, IcebergSourceSplit<S, G>> {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergSourceSplitReader.class);
 
   private final IcebergSourceReaderMetrics metrics;
-  private final ReaderFunction<T> openSplitFunction;
+  private final ReaderFunction<T, S, G> openSplitFunction;
   private final int indexOfSubtask;
-  private final Queue<IcebergSourceSplit> splits;
+  private final Queue<IcebergSourceSplit<S, G>> splits;
 
   private CloseableIterator<RecordsWithSplitIds<RecordAndPosition<T>>> currentReader;
-  private IcebergSourceSplit currentSplit;
+  private IcebergSourceSplit<S, G> currentSplit;
   private String currentSplitId;
 
   IcebergSourceSplitReader(
       IcebergSourceReaderMetrics metrics,
-      ReaderFunction<T> openSplitFunction,
+      ReaderFunction<T, S, G> openSplitFunction,
       SourceReaderContext context) {
     this.metrics = metrics;
     this.openSplitFunction = openSplitFunction;
@@ -61,7 +63,7 @@ class IcebergSourceSplitReader<T> implements SplitReader<RecordAndPosition<T>, I
   public RecordsWithSplitIds<RecordAndPosition<T>> fetch() throws IOException {
     metrics.incrementSplitReaderFetchCalls(1);
     if (currentReader == null) {
-      IcebergSourceSplit nextSplit = splits.poll();
+      IcebergSourceSplit<S, G> nextSplit = splits.poll();
       if (nextSplit != null) {
         currentSplit = nextSplit;
         currentSplitId = nextSplit.splitId();
@@ -87,7 +89,7 @@ class IcebergSourceSplitReader<T> implements SplitReader<RecordAndPosition<T>, I
   }
 
   @Override
-  public void handleSplitsChanges(SplitsChange<IcebergSourceSplit> splitsChange) {
+  public void handleSplitsChanges(SplitsChange<IcebergSourceSplit<S, G>> splitsChange) {
     if (!(splitsChange instanceof SplitsAddition)) {
       throw new UnsupportedOperationException(
           String.format("Unsupported split change: %s", splitsChange.getClass()));
@@ -110,11 +112,11 @@ class IcebergSourceSplitReader<T> implements SplitReader<RecordAndPosition<T>, I
     }
   }
 
-  private long calculateBytes(IcebergSourceSplit split) {
-    return split.task().files().stream().map(FileScanTask::length).reduce(0L, Long::sum);
+  private long calculateBytes(IcebergSourceSplit<S, G> split) {
+    return split.task().sizeBytes();
   }
 
-  private long calculateBytes(SplitsChange<IcebergSourceSplit> splitsChanges) {
+  private long calculateBytes(SplitsChange<IcebergSourceSplit<S, G>> splitsChanges) {
     return splitsChanges.splits().stream().map(this::calculateBytes).reduce(0L, Long::sum);
   }
 

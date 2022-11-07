@@ -42,12 +42,13 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
   private static final long serialVersionUID = 1L;
 
   private final TableLoader tableLoader;
+  private final ScanContext context;
+  private final Schema tableSchema;
   private final FileIO io;
   private final EncryptionManager encryption;
-  private final ScanContext context;
-  private final RowDataFileScanTaskReader rowDataReader;
 
-  private transient DataIterator<RowData> iterator;
+  private transient RowDataFileScanTaskReader rowDataReader;
+
   private transient long currentReadCount = 0L;
 
   FlinkInputFormat(
@@ -57,12 +58,10 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
       EncryptionManager encryption,
       ScanContext context) {
     this.tableLoader = tableLoader;
+    this.context = context;
+    this.tableSchema = tableSchema;
     this.io = io;
     this.encryption = encryption;
-    this.context = context;
-    this.rowDataReader =
-        new RowDataFileScanTaskReader(
-            tableSchema, context.project(), context.nameMapping(), context.caseSensitive());
   }
 
   @VisibleForTesting
@@ -102,7 +101,15 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
 
   @Override
   public void open(FlinkInputSplit split) {
-    this.iterator = new DataIterator<>(rowDataReader, split.getTask(), io, encryption);
+    this.rowDataReader =
+        new RowDataFileScanTaskReader(
+            tableSchema,
+            context.project(),
+            context.caseSensitive(),
+            context.nameMapping(),
+            split.getTask(),
+            io,
+            encryption);
   }
 
   @Override
@@ -110,20 +117,20 @@ public class FlinkInputFormat extends RichInputFormat<RowData, FlinkInputSplit> 
     if (context.limit() > 0 && currentReadCount >= context.limit()) {
       return true;
     } else {
-      return !iterator.hasNext();
+      return !rowDataReader.hasNext();
     }
   }
 
   @Override
   public RowData nextRecord(RowData reuse) {
     currentReadCount++;
-    return iterator.next();
+    return rowDataReader.next();
   }
 
   @Override
   public void close() throws IOException {
-    if (iterator != null) {
-      iterator.close();
+    if (rowDataReader != null) {
+      rowDataReader.close();
     }
   }
 }

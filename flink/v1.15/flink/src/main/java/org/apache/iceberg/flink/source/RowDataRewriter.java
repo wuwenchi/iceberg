@@ -109,7 +109,6 @@ public class RowDataRewriter {
     private final boolean caseSensitive;
     private final EncryptionManager encryptionManager;
     private final TaskWriterFactory<RowData> taskWriterFactory;
-    private final RowDataFileScanTaskReader rowDataReader;
 
     public RewriteMap(
         Schema schema,
@@ -124,8 +123,6 @@ public class RowDataRewriter {
       this.caseSensitive = caseSensitive;
       this.encryptionManager = encryptionManager;
       this.taskWriterFactory = taskWriterFactory;
-      this.rowDataReader =
-          new RowDataFileScanTaskReader(schema, schema, nameMapping, caseSensitive);
     }
 
     @Override
@@ -140,8 +137,9 @@ public class RowDataRewriter {
     public List<DataFile> map(CombinedScanTask task) throws Exception {
       // Initialize the task writer.
       this.writer = taskWriterFactory.create();
-      try (DataIterator<RowData> iterator =
-          new DataIterator<>(rowDataReader, task, io, encryptionManager)) {
+      try (RowDataFileScanTaskReader iterator =
+          new RowDataFileScanTaskReader(
+              schema, schema, caseSensitive, nameMapping, task, io, encryptionManager)) {
         while (iterator.hasNext()) {
           RowData rowData = iterator.next();
           writer.write(rowData);

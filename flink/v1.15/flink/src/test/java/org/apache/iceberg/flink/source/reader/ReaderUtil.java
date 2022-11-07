@@ -21,7 +21,7 @@ package org.apache.iceberg.flink.source.reader;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
-import org.apache.flink.table.data.RowData;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.BaseCombinedScanTask;
 import org.apache.iceberg.BaseFileScanTask;
 import org.apache.iceberg.CombinedScanTask;
@@ -41,7 +41,6 @@ import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.ResidualEvaluator;
 import org.apache.iceberg.flink.TestFixtures;
-import org.apache.iceberg.flink.source.DataIterator;
 import org.apache.iceberg.flink.source.RowDataFileScanTaskReader;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileAppender;
@@ -81,11 +80,14 @@ public class ReaderUtil {
         residuals);
   }
 
-  public static DataIterator<RowData> createDataIterator(CombinedScanTask combinedTask) {
-    return new DataIterator<>(
-        new RowDataFileScanTaskReader(TestFixtures.SCHEMA, TestFixtures.SCHEMA, null, true),
+  public static RowDataFileScanTaskReader createDataIterator(CombinedScanTask combinedTask) {
+    return new RowDataFileScanTaskReader(
+        TestFixtures.SCHEMA,
+        TestFixtures.SCHEMA,
+        true,
+        null,
         combinedTask,
-        new HadoopFileIO(new org.apache.hadoop.conf.Configuration()),
+        new HadoopFileIO(new Configuration()),
         new PlaintextEncryptionManager());
   }
 

@@ -34,7 +34,7 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.flink.FlinkConfigOptions;
 import org.apache.iceberg.flink.TestFixtures;
 import org.apache.iceberg.flink.TestHelpers;
-import org.apache.iceberg.flink.source.DataIterator;
+import org.apache.iceberg.flink.source.RowDataFileScanTaskReader;
 import org.apache.iceberg.io.CloseableIterator;
 import org.junit.Assert;
 import org.junit.ClassRule;
@@ -47,7 +47,7 @@ public class TestArrayPoolDataIteratorBatcherRowData {
   private static final FileFormat fileFormat = FileFormat.PARQUET;
 
   private final GenericAppenderFactory appenderFactory;
-  private final DataIteratorBatcher<RowData> batcher;
+  private final DataIteratorBatcher<RowData, FileScanTask> batcher;
 
   public TestArrayPoolDataIteratorBatcherRowData() {
     Configuration config = new Configuration();
@@ -67,7 +67,7 @@ public class TestArrayPoolDataIteratorBatcherRowData {
     FileScanTask fileTask =
         ReaderUtil.createFileTask(records, TEMPORARY_FOLDER.newFile(), fileFormat, appenderFactory);
     CombinedScanTask combinedTask = new BaseCombinedScanTask(fileTask);
-    DataIterator<RowData> dataIterator = ReaderUtil.createDataIterator(combinedTask);
+    RowDataFileScanTaskReader dataIterator = ReaderUtil.createDataIterator(combinedTask);
     String splitId = "someSplitId";
     CloseableIterator<RecordsWithSplitIds<RecordAndPosition<RowData>>> recordBatchIterator =
         batcher.batch(splitId, dataIterator);
@@ -109,7 +109,7 @@ public class TestArrayPoolDataIteratorBatcherRowData {
     FileScanTask fileTask =
         ReaderUtil.createFileTask(records, TEMPORARY_FOLDER.newFile(), fileFormat, appenderFactory);
     CombinedScanTask combinedTask = new BaseCombinedScanTask(fileTask);
-    DataIterator<RowData> dataIterator = ReaderUtil.createDataIterator(combinedTask);
+    RowDataFileScanTaskReader dataIterator = ReaderUtil.createDataIterator(combinedTask);
     String splitId = "someSplitId";
     CloseableIterator<RecordsWithSplitIds<RecordAndPosition<RowData>>> recordBatchIterator =
         batcher.batch(splitId, dataIterator);
@@ -226,7 +226,7 @@ public class TestArrayPoolDataIteratorBatcherRowData {
     CombinedScanTask combinedTask =
         new BaseCombinedScanTask(Arrays.asList(fileTask0, fileTask1, fileTask2));
 
-    DataIterator<RowData> dataIterator = ReaderUtil.createDataIterator(combinedTask);
+    RowDataFileScanTaskReader dataIterator = ReaderUtil.createDataIterator(combinedTask);
     // seek to file1 and after record 1
     dataIterator.seek(1, 1);
 

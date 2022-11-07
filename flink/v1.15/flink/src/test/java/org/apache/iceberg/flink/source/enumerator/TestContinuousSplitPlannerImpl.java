@@ -34,7 +34,7 @@ import org.apache.iceberg.flink.HadoopTableResource;
 import org.apache.iceberg.flink.TestFixtures;
 import org.apache.iceberg.flink.source.ScanContext;
 import org.apache.iceberg.flink.source.StreamingStartingStrategy;
-import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
+import org.apache.iceberg.flink.source.split.IcebergSourceCombinedSplit;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.util.DateTimeUtil;
@@ -102,11 +102,12 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(
         snapshot.timestampMillis(), result.toPosition().snapshotTimestampMs().longValue());
     Assert.assertEquals(1, result.splits().size());
-    IcebergSourceSplit split = Iterables.getOnlyElement(result.splits());
-    Assert.assertEquals(1, split.task().files().size());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(result.splits());
+    Assert.assertEquals(1, split.task().tasks().size());
     Assert.assertEquals(
         dataFile.path().toString(),
-        Iterables.getOnlyElement(split.task().files()).file().path().toString());
+        Iterables.getOnlyElement(split.task().tasks()).file().path().toString());
     return result.toPosition();
   }
 
@@ -158,10 +159,11 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(
         snapshot2.timestampMillis(), initialResult.toPosition().snapshotTimestampMs().longValue());
     Assert.assertEquals(1, initialResult.splits().size());
-    IcebergSourceSplit split = Iterables.getOnlyElement(initialResult.splits());
-    Assert.assertEquals(2, split.task().files().size());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(initialResult.splits());
+    Assert.assertEquals(2, split.task().tasks().size());
     Set<String> discoveredFiles =
-        split.task().files().stream()
+        split.task().tasks().stream()
             .map(fileScanTask -> fileScanTask.file().path().toString())
             .collect(Collectors.toSet());
     Set<String> expectedFiles =
@@ -240,8 +242,9 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(snapshot2.snapshotId(), secondResult.toPosition().snapshotId().longValue());
     Assert.assertEquals(
         snapshot2.timestampMillis(), secondResult.toPosition().snapshotTimestampMs().longValue());
-    IcebergSourceSplit split = Iterables.getOnlyElement(secondResult.splits());
-    Assert.assertEquals(1, split.task().files().size());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(secondResult.splits());
+    Assert.assertEquals(1, split.task().tasks().size());
     Set<String> discoveredFiles =
         split.task().files().stream()
             .map(fileScanTask -> fileScanTask.file().path().toString())
@@ -311,7 +314,8 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(snapshot2.snapshotId(), secondResult.toPosition().snapshotId().longValue());
     Assert.assertEquals(
         snapshot2.timestampMillis(), secondResult.toPosition().snapshotTimestampMs().longValue());
-    IcebergSourceSplit split = Iterables.getOnlyElement(secondResult.splits());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(secondResult.splits());
     Assert.assertEquals(2, split.task().files().size());
     Set<String> discoveredFiles =
         split.task().files().stream()
@@ -404,7 +408,8 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(snapshot2.snapshotId(), secondResult.toPosition().snapshotId().longValue());
     Assert.assertEquals(
         snapshot2.timestampMillis(), secondResult.toPosition().snapshotTimestampMs().longValue());
-    IcebergSourceSplit split = Iterables.getOnlyElement(secondResult.splits());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(secondResult.splits());
     Assert.assertEquals(1, split.task().files().size());
     Set<String> discoveredFiles =
         split.task().files().stream()
@@ -492,7 +497,8 @@ public class TestContinuousSplitPlannerImpl {
     Assert.assertEquals(snapshot2.snapshotId(), secondResult.toPosition().snapshotId().longValue());
     Assert.assertEquals(
         snapshot2.timestampMillis(), secondResult.toPosition().snapshotTimestampMs().longValue());
-    IcebergSourceSplit split = Iterables.getOnlyElement(secondResult.splits());
+    IcebergSourceCombinedSplit split =
+        (IcebergSourceCombinedSplit) Iterables.getOnlyElement(secondResult.splits());
     Assert.assertEquals(1, split.task().files().size());
     Set<String> discoveredFiles =
         split.task().files().stream()
