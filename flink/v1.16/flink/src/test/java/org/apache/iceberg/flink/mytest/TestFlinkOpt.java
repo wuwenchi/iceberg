@@ -1,64 +1,20 @@
 /*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
- *  * Licensed to the Apache Software Foundation (ASF) under one
- *  * or more contributor license agreements.  See the NOTICE file
- *  * distributed with this work for additional information
- *  * regarding copyright ownership.  The ASF licenses this file
- *  * to you under the Apache License, Version 2.0 (the
- *  * "License"); you may not use this file except in compliance
- *  * with the License.  You may obtain a copy of the License at
- *  *
- *  *   http://www.apache.org/licenses/LICENSE-2.0
- *  *
- *  * Unless required by applicable law or agreed to in writing,
- *  * software distributed under the License is distributed on an
- *  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- *  * KIND, either express or implied.  See the License for the
- *  * specific language governing permissions and limitations
- *  * under the License.
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
- */
-
-/*
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/*
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/*
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package org.apache.iceberg.flink.mytest;
@@ -72,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import java.util.stream.IntStream;
 import org.apache.commons.lang.RandomStringUtils;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.configuration.CoreOptions;
@@ -97,14 +54,16 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.flink.CatalogLoader;
-import org.apache.iceberg.flink.FlinkConfigOptions;
 import org.apache.iceberg.flink.TableLoader;
 import org.apache.iceberg.flink.actions.Actions;
 import org.apache.iceberg.flink.sink.FlinkSink;
 import org.apache.iceberg.flink.source.FlinkSource;
-import org.apache.iceberg.flink.source.ScanContext;
+import org.apache.iceberg.flink.source.IcebergTableSource;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hive.HiveCatalog;
+import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.relocated.com.google.common.collect.ComparisonChain;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
@@ -134,6 +93,7 @@ public class TestFlinkOpt {
   static boolean drop;
   static int parallelism;
   static int method;
+  static boolean isStream;
   static String localPath;
   static HashMap<String, String> scanConf = new HashMap<>();
 
@@ -160,7 +120,7 @@ public class TestFlinkOpt {
     } else if (method == 3) {
       createHiveCatalog();
     }
-    getEnv();
+    getFlinkEnv();
     begin = System.currentTimeMillis();
   }
 
@@ -223,6 +183,7 @@ public class TestFlinkOpt {
     drop = true;
     localPath = "file:///Users/wuwenchi/github/iceberg/warehouse";
     method = 1;
+    isStream = true;
 
     System.out.println("===================================================");
     //        System.out.println(System.getProperty("user.dir"));
@@ -237,6 +198,11 @@ public class TestFlinkOpt {
     System.out.println("drop:         " + drop);
     System.out.println("localPath:    " + localPath);
     System.out.println("method:       " + method);
+    if (isStream) {
+      System.out.println("mode:         stream");
+    } else {
+      System.out.println("mode:         batch");
+    }
     System.out.println("===================================================");
   }
 
@@ -279,8 +245,8 @@ public class TestFlinkOpt {
 
     HashSet<Integer> identifierFieldIds = new HashSet<>();
     identifierFieldIds.add(11);
-    identifierFieldIds.add(12);
-    identifierFieldIds.add(13);
+    // identifierFieldIds.add(12);
+    // identifierFieldIds.add(13);
     Schema schema = new Schema(columns, identifierFieldIds);
     //    Schema schema = new Schema(columns);
 
@@ -302,6 +268,11 @@ public class TestFlinkOpt {
     tableProperties.put(TableProperties.WRITE_TARGET_FILE_SIZE_BYTES, String.valueOf(512 * 1024 * 1024));
     //    tableProperties.put(TableProperties.PARQUET_PAGE_SIZE_BYTES, String.valueOf(128*1024));
     tableProperties.put(TableProperties.UPSERT_ENABLED, "true");
+    // 'parquet_bloom_filter_enabled' = 'false',
+    //     'write.upsert.enabled' = 'true',
+    //     'write.parquet.bloom-filter-enabled.column.order_key' = 'true',
+    tableProperties.put("parquet_bloom_filter_enabled", "false");
+    tableProperties.put("write.parquet.bloom-filter-enabled.column.order_key", "true");
 
     Table table = catalog.createTable(tableId, schema, partitionSpec, tableProperties);
     System.out.println(table.location());
@@ -366,7 +337,7 @@ public class TestFlinkOpt {
       //      System.out.println(d.getInt(0) + "," + d.getString(1) + "," + d.getString(2));
       //      System.out.println(d.getInt(0) + "," + d.getString(1));
       //            System.out.println(d.getInt(0) + "," + d.getTimestamp(1,6));
-      System.out.println(d.getInt(0));
+      System.out.println(d.getInt(0) + " , " + d.getInt(1) + " , " + d.getString(2) + " , " + d.getString(3));
       i++;
     }
     System.out.println("total: " + i);
@@ -465,17 +436,17 @@ public class TestFlinkOpt {
 
   @Test
   public void sqlRead() {
-    tEnv.executeSql("desc " + tableName).print();
-    tEnv.executeSql("insert into " + tableName + " values (1, 'a', TO_TIMESTAMP(FROM_UNIXTIME(24)))").print();
+    // tEnv.executeSql("desc " + tableName).print();
+    // tEnv.executeSql("insert into " + tableName + " values (1, 'a', TO_TIMESTAMP(FROM_UNIXTIME(24)))").print();
     tEnv.sqlQuery("select * from " + tableName).execute().print();
-    catalog.loadTable(tableId).properties().forEach((k, v) -> {
-      if (k.startsWith("flink")) {
-        System.out.println(k + ", " + v);
-      }
-    });
+    // catalog.loadTable(tableId).properties().forEach((k, v) -> {
+    //   if (k.startsWith("flink")) {
+    //     System.out.println(k + ", " + v);
+    //   }
+    // });
   }
 
-  static public void getEnv() {
+  static public void getFlinkEnv() {
     org.apache.flink.configuration.Configuration confData = new org.apache.flink.configuration.Configuration();
     confData.setString("akka.ask.timeout", "1h");
     confData.setString("akka.watch.heartbeat.interval", "1h");
@@ -487,7 +458,11 @@ public class TestFlinkOpt {
     confData.setBoolean(CoreOptions.CHECK_LEAKED_CLASSLOADER, false);
     // confData.setBoolean(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE.key(), true);
     env = StreamExecutionEnvironment.getExecutionEnvironment(confData);
-    env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
+    if (isStream) {
+      env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
+    } else {
+      env.setRuntimeMode(RuntimeExecutionMode.BATCH);
+    }
     tEnv = StreamTableEnvironment.create(env, EnvironmentSettings.newInstance().withConfiguration(confData).build());
     if (method == 1) {
       tEnv.executeSql("" +
@@ -567,6 +542,42 @@ public class TestFlinkOpt {
     tableEnv.sqlQuery("select * from " + dbName + "." + tableName).execute().print();
   }
 
+  static public GenericRowData geneInsertData(int opt, int id1, int id2, String par, String c4) {
+    RowKind kind = null;
+    switch (opt) {
+      case 1:
+        kind = RowKind.INSERT;
+        break;
+      case 2:
+        kind = RowKind.DELETE;
+        break;
+      case 3:
+        kind = RowKind.UPDATE_BEFORE;
+        break;
+      case 4:
+        kind = RowKind.UPDATE_AFTER;
+        break;
+    }
+    GenericRowData rowData = new GenericRowData(kind, 5);
+    rowData.setField(0, id1);
+    rowData.setField(1, id2);
+    rowData.setField(2, StringData.fromString(par));
+    // rowData.setField(3, StringData.fromString(c4 + RandomStringUtils.randomAlphanumeric(5)));
+    rowData.setField(3, StringData.fromString(c4));
+    byte[] bytes = new byte[] {1, 2, 3, 4, 5, 6};
+    rowData.setField(4, bytes);
+    return rowData;
+  }
+
+  public static List<GenericRowData> geneData() {
+    List<GenericRowData> dataList = Arrays.asList(
+        // geneInsertData(1, 1, 1, "a", "ab"),
+        // geneInsertData(1, 2, 2, "a", "ab"),
+        geneInsertData(1, 2, 3, "a", "ab")
+    );
+    return dataList;
+  }
+
   public static class EqualDelete implements ParallelSourceFunction<RowData> {
 
     Integer count;
@@ -587,36 +598,7 @@ public class TestFlinkOpt {
 
     @Override
     public void run(SourceContext<RowData> ctx) {
-      for (int i = 0; i < step; i++) {
-        GenericRowData rowData = new GenericRowData(RowKind.INSERT, 5);
-        rowData.setField(0, count * step + i + offset);
-        rowData.setField(1, count * step + i + offset);
-        //                rowData.setField(0, 1);
-        //        rowData.setField(0, (int)(Math.random() * 100000));
-        rowData.setField(2, StringData.fromString("a"));
-        //        rowData.setField(1, StringData.fromString("abc"));
-        rowData.setField(3, StringData.fromString(RandomStringUtils.randomAlphanumeric(5) + "_insert"));
-        //        rowData.setField(2, StringData.fromString("abc"));
-        byte[] bytes = new byte[] {1, 2, 3, 4, 5, 6};
-        rowData.setField(4, bytes);
-        ctx.collect(rowData);
-
-        //        GenericRowData rowData3 = new GenericRowData(RowKind.UPDATE_BEFORE, 3);
-        ////        rowData3.setField(0, count * step + i + offset);
-        //        rowData3.setField(0, 1);
-        //        rowData3.setField(1, StringData.fromString("abc"));
-        //        rowData3.setField(2, StringData.fromString(RandomStringUtils.randomAlphanumeric(5) + "_before"));
-        ////        rowData3.setField(2, StringData.fromString("abc"));
-        //        ctx.collect(rowData3);
-        ////
-        //        GenericRowData rowData2 = new GenericRowData(RowKind.UPDATE_AFTER, 3);
-        //        rowData2.setField(0, count * step + i + offset);
-        //        rowData2.setField(0, 1);
-        //        rowData2.setField(1, StringData.fromString("def"));
-        //        rowData2.setField(2, StringData.fromString(RandomStringUtils.randomAlphanumeric(5) + "_after"));
-        ////        rowData2.setField(2, StringData.fromString("abc"));
-        //        ctx.collect(rowData2);
-      }
+      geneData().forEach(ctx::collect);
     }
 
     @Override
@@ -766,10 +748,5 @@ public class TestFlinkOpt {
     tEnv.getConfig().setSqlDialect(SqlDialect.HIVE);
     tEnv.executeSql("ALTER TABLE " + tableName + " \n" +
         "DROP PARTITION c_timestamp").print();
-  }
-
-  @Test
-  public void testPPPP() {
-    //        Collections.unmodifiableMap()
   }
 }
