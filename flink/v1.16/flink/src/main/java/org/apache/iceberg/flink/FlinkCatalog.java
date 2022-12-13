@@ -70,6 +70,7 @@ import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.flink.util.FlinkCompatibilityUtil;
+import org.apache.iceberg.flink.util.FlinkPackage;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
@@ -103,20 +104,24 @@ public class FlinkCatalog extends AbstractCatalog {
       String defaultDatabase,
       Namespace baseNamespace,
       CatalogLoader catalogLoader,
-      boolean cacheEnabled) {
+      boolean cacheEnabled,
+      long cacheExpirationIntervalMs) {
     super(catalogName, defaultDatabase);
     this.catalogLoader = catalogLoader;
     this.baseNamespace = baseNamespace;
     this.cacheEnabled = cacheEnabled;
 
     Catalog originalCatalog = catalogLoader.loadCatalog();
-    icebergCatalog = cacheEnabled ? CachingCatalog.wrap(originalCatalog) : originalCatalog;
+    icebergCatalog =
+        cacheEnabled
+            ? CachingCatalog.wrap(originalCatalog, cacheExpirationIntervalMs)
+            : originalCatalog;
     asNamespaceCatalog =
         originalCatalog instanceof SupportsNamespaces ? (SupportsNamespaces) originalCatalog : null;
     closeable = originalCatalog instanceof Closeable ? (Closeable) originalCatalog : null;
 
     EnvironmentContext.put(EnvironmentContext.ENGINE_NAME, "flink");
-    EnvironmentContext.put(EnvironmentContext.ENGINE_VERSION, "1.16");
+    EnvironmentContext.put(EnvironmentContext.ENGINE_VERSION, FlinkPackage.version());
   }
 
   @Override
